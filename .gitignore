@@ -1,0 +1,15 @@
+# Build output
+bin/
+obj/
+dist/
+
+# User settings: contains audio device GUIDs and any learned headset profile,
+# which are specific to one machine and should never be published.
+CommPanel.settings.json
+
+# Editor / OS noise
+.vs/
+*.user
+*.suo
+Thumbs.db
+desktop.ini
