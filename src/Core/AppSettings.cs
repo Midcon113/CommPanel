@@ -64,6 +64,22 @@ internal sealed class AppSettings
     [JsonIgnore]
     public float SafeFontScale => Math.Clamp(FontScale, 0.8f, 2.0f);
 
+    /// <summary>Whether the direct voice link strip is shown and its socket held open.</summary>
+    public bool VoiceEnabled { get; set; }
+
+    /// <summary>
+    /// The UDP port the voice link listens on. A fixed port rather than a random one, because
+    /// a link code is worth writing down once and a router mapping is worth reusing.
+    /// </summary>
+    public int VoicePort { get; set; } = 47821;
+
+    /// <summary>Clamped to a usable unprivileged port, since a bad value cannot be bound.</summary>
+    [JsonIgnore]
+    public int SafeVoicePort => VoicePort is >= 1024 and <= 65535 ? VoicePort : 47821;
+
+    /// <summary>The last code dialled, offered again so a repeat call needs no reading out.</summary>
+    public string? LastVoicePeer { get; set; }
+
     /// <summary>Whether the per-application mixer section is expanded.</summary>
     public bool MixerExpanded { get; set; }
 

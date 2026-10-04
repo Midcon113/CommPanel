@@ -7,6 +7,9 @@ through a game's audio menu when you go from speakers to a headset for multiplay
 The panel is a bank of illuminated indicator lamps, one per device. The lit lamp is the
 current default. Clicking any other lamp switches to it and the light moves.
 
+It also carries a **direct voice link**, for talking to one other person without a server
+in the middle — see [Talking to one person](#talking-to-one-person--the-voice-link).
+
 ## Installing
 
 There is no installer. Copy the `CommPanel` folder wherever you want it and run
@@ -334,6 +337,58 @@ Taking focus is deliberately avoided — that would minimise a fullscreen game.
 It triggers once per launch, so alt-tabbing back into a game later does not keep popping
 the panel open.
 
+### Talking to one person — the voice link
+
+Press **VOICE** to open the strip. It shows your **link code**: ten characters such as
+`0R048-8HEPD`. Read it out to the other person, take theirs, and you both press **CALL…**
+and type the other's code. Within a second or two the key turns green and says **HANG UP**.
+
+Audio goes **straight from one machine to the other**. There is no server in the middle, so
+nobody can listen in, nothing is recorded, and there is nothing to pay for or sign up to.
+
+What the strip shows:
+
+| Control | What it does |
+|---|---|
+| **MY CODE** | Your code, lamp lit once it is known. Changes each time your router gives you a new address, so check it before each call. |
+| **COPY** | Puts the code on the clipboard, for pasting into a chat window. |
+| **CALL… / HANG UP** | Dials, or ends the call. Amber while calling, green once connected. |
+| **MIC** | Cuts your microphone. Lit means live. Only works during a call. |
+| **SEND / RECV** | Your level going out, and theirs coming in. |
+
+#### The microphone is only open during a call
+
+Switching **VOICE** on opens a network socket and nothing else. The microphone is not
+touched until you press **CALL…**, and it is released the moment you hang up — so Windows'
+recording indicator tracks your calls exactly, rather than being lit all the time CommPanel
+is running.
+
+#### It uses the Communications devices
+
+A call goes to whichever devices Windows has marked **Communications** — the ones the blue
+`COMMS` lamps on the panel point at. That is what the role is for, and it means a call can
+land in your headset while a game carries on through the speakers. Switch headsets
+mid-call and the call follows.
+
+#### Both of you have to press Call
+
+This is not a limitation to work around; it is how the connection gets made. Home routers
+drop unexpected incoming traffic, so the only way through without a middleman is for both
+ends to start sending at roughly the same time — each side's outgoing packet opens the door
+for the other's. Hence: agree on the phone or in chat, then both press **CALL…**.
+
+If it stays amber and never goes green, the usual causes are one end not having dialled
+yet, a stale code (re-read it — it changes when your address does), or a router that will
+not pass a direct connection. On the same network you can skip the code entirely and type
+the other machine's `192.168.x.x:47821` instead.
+
+The first call will raise a Windows Firewall prompt. Allow it on **private** networks.
+
+#### The port
+
+**Settings → VOICE LINK PORT** sets the UDP port, `47821` by default. Change it only if
+something else on your machine already uses it — your link code changes with it.
+
 ## Performance
 
 The point of a tool like this is to be invisible while a game runs, so:
@@ -390,4 +445,5 @@ misleading success code can never show up as a lit lamp.
 src/Audio/    Core Audio COM interop, device enumeration, the default-device switch
 src/Core/     Settings, Win32 interop, the foreground watcher, startup registration
 src/Ui/       The panel window, the lamp controls, the drawing theme, settings dialog
+src/Voice/    The direct voice link: packet format, hole punching, capture and playback
 ```

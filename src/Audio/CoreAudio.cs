@@ -239,6 +239,55 @@ internal interface IAudioClient
     [PreserveSig] int GetService(ref Guid iid, [MarshalAs(UnmanagedType.IUnknown)] out object? service);
 }
 
+/// <summary>Values of AUDIO_STREAM_CATEGORY.</summary>
+internal enum AudioStreamCategory
+{
+    Other = 0,
+    Communications = 3
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct AudioClientProperties
+{
+    public uint Size;
+    [MarshalAs(UnmanagedType.Bool)] public bool IsOffload;
+    public AudioStreamCategory Category;
+    public uint Options;
+}
+
+/// <summary>
+/// Adds stream categories to <see cref="IAudioClient"/>.
+///
+/// Declaring a stream as Communications is what lets Windows apply its voice processing -
+/// echo cancellation, noise suppression, gain control - on hardware that supports it. Without
+/// it a call made on open speakers feeds the far end back to themselves.
+/// </summary>
+[ComImport, Guid("726778CD-F60A-4eda-82DE-E47610CD78AA"),
+ InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+internal interface IAudioClient2
+{
+    // IAudioClient, preserved for vtable order.
+    [PreserveSig] int Initialize(int shareMode, uint streamFlags, long bufferDuration,
+                                 long periodicity, IntPtr format, IntPtr sessionGuid);
+    [PreserveSig] int GetBufferSize(out uint frames);
+    [PreserveSig] int GetStreamLatency(out long latency);
+    [PreserveSig] int GetCurrentPadding(out uint frames);
+    [PreserveSig] int IsFormatSupported(int shareMode, IntPtr format, out IntPtr closestMatch);
+    [PreserveSig] int GetMixFormat(out IntPtr format);
+    [PreserveSig] int GetDevicePeriod(out long defaultPeriod, out long minimumPeriod);
+    [PreserveSig] int Start();
+    [PreserveSig] int Stop();
+    [PreserveSig] int Reset();
+    [PreserveSig] int SetEventHandle(IntPtr handle);
+    [PreserveSig] int GetService(ref Guid iid, [MarshalAs(UnmanagedType.IUnknown)] out object? service);
+
+    [PreserveSig] int IsOffloadCapable(AudioStreamCategory category,
+                                       [MarshalAs(UnmanagedType.Bool)] out bool offloadCapable);
+    [PreserveSig] int SetClientProperties(ref AudioClientProperties properties);
+    [PreserveSig] int GetBufferSizeLimits(IntPtr format, [MarshalAs(UnmanagedType.Bool)] bool eventDriven,
+                                          out long minDuration, out long maxDuration);
+}
+
 /// <summary>Writes audio into a render endpoint's buffer - the playback half of IAudioClient.</summary>
 [ComImport, Guid("F294ACFC-3146-4483-A7BF-ADDCA7C260E2"),
  InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]

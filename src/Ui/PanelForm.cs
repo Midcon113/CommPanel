@@ -10,7 +10,7 @@ namespace CommPanel.Ui;
 /// Windows switches its default endpoint immediately - no Sound control panel, no in-game
 /// audio menu.
 /// </summary>
-internal sealed class PanelForm : Form
+internal sealed partial class PanelForm : Form
 {
     // Layout constants, in logical (96 dpi) units.
     private const int EdgeMargin = 16;
@@ -204,6 +204,11 @@ internal sealed class PanelForm : Form
 
         if (_settings.WatchProcesses) _watcher.Start();
         if (_settings.HotkeyEnabled) RegisterHotkey();
+
+        // Opened at startup rather than when the window shows: being reachable for a call is
+        // the point, and CommPanel normally sits in the tray. No audio device is touched
+        // until a call is actually placed.
+        if (_settings.VoiceEnabled) StartVoice();
     }
 
     protected override CreateParams CreateParams
@@ -275,6 +280,8 @@ internal sealed class PanelForm : Form
             _outputMeter, _inputMeter, _outputFader, _inputFader, _outputMute, _inputMute,
             _mixerToggle
         });
+
+        BuildVoiceStrip();
     }
 
     /// <summary>A logical measurement scaled for both DPI and the user's chosen panel size.</summary>
@@ -309,6 +316,7 @@ internal sealed class PanelForm : Form
         _watchListButton.Font = _stencilFont;
         _refreshButton.Font = _stencilFont;
         _mixerToggle.Font = _stencilFont;
+        ApplyVoiceFonts();
 
         _outputMeter.CaptionFont = _stencilFont;
         _inputMeter.CaptionFont = _stencilFont;
@@ -554,7 +562,11 @@ internal sealed class PanelForm : Form
         int mixerHeaderHeight = Scaled(26);
         int mixerTop = mixerHeaderTop + mixerHeaderHeight + Scaled(6);
 
-        int footerTop = mixerTop + mixerHeight + Scaled(10);
+        // The voice strip places its own controls here rather than below, because the footer
+        // starts from wherever it ends and only it knows whether it is expanded.
+        int voiceBottom = LayoutVoice(mixerTop + mixerHeight + Scaled(10), width, margin);
+
+        int footerTop = voiceBottom + Scaled(10);
         int height = footerTop + footerHeight + Scaled(4);
 
         ClientSize = new Size(width, height);
@@ -834,6 +846,7 @@ internal sealed class PanelForm : Form
             if (_outputConsole.Height > 0) PanelTheme.DrawRecess(g, _outputConsole, radius);
             if (_inputConsole.Height > 0) PanelTheme.DrawRecess(g, _inputConsole, radius);
             if (_mixerPlate.Height > 0) PanelTheme.DrawRecess(g, _mixerPlate, radius);
+            DrawVoiceChassis(g, radius);
 
             if (_mixerHeader.Width > 0)
             {
@@ -995,11 +1008,12 @@ internal sealed class PanelForm : Form
             // A base station that was plugged in after startup shows up as an endpoint
             // change, so its HID interface can be picked up without any polling.
             _headsetWatcher.SetProfiles(_settings.HeadsetProfiles);
-        if (_settings.WatchHeadsetPower)
-        {
-            _headsetWatcher.Rescan();
-            if (_settings.QueryHeadsetStatus) QueryHeadsetStatus();
-        }
+
+            if (_settings.WatchHeadsetPower)
+            {
+                _headsetWatcher.Rescan();
+                if (_settings.QueryHeadsetStatus) QueryHeadsetStatus();
+            }
         }
 
         UpdateTrayText();
@@ -1013,6 +1027,10 @@ internal sealed class PanelForm : Form
             if (lostOutput is not null) FailOver(EDataFlow.Render, _outputs, lostOutput, isOutput: true);
             if (lostInput is not null) FailOver(EDataFlow.Capture, _inputs, lostInput, isOutput: false);
         }
+
+        // A call in progress follows the Communications endpoints, so switching headset
+        // mid-call takes the call with it instead of stranding it on a device that has gone.
+        _voice?.FollowDeviceChanges();
     }
 
     /// <summary>
@@ -1662,6 +1680,7 @@ internal sealed class PanelForm : Form
         if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
 
         StartMetering();
+        SetVoiceTimerRunning(true);
 
         // Ask the headset where it stands each time the panel opens, since it may have
         // switched itself off while we were in the tray.
@@ -1685,6 +1704,7 @@ internal sealed class PanelForm : Form
     public void HidePanel()
     {
         StopMetering();
+        SetVoiceTimerRunning(false);
         SaveWindowPosition();
         TopMost = false;
         Hide();
@@ -1787,6 +1807,7 @@ internal sealed class PanelForm : Form
             PanelTheme.Bloom = _settings.BloomMultiplier;
             ApplyScale();
             if (_settings.ShowMeters) StartMetering(); else StopMetering();
+            SyncVoiceWithSettings();
             SetStatus("SETTINGS SAVED", PanelTheme.LampGreen);
         }
         else if (Math.Abs(_settings.FontScale - scaleOnEntry) > 0.001f)
@@ -1906,6 +1927,7 @@ internal sealed class PanelForm : Form
             _audio.EndpointsChanged -= OnEndpointsChangedFromAudioService;
             StopMetering();
             _meterTimer.Dispose();
+            DisposeVoice();
             CloseCaptureMeter();
             CloseSessionMixer();
             _outputControls?.Dispose();

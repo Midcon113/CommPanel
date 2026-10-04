@@ -200,6 +200,36 @@ internal sealed class AudioEndpointService : IDisposable
         catch { return null; }
     }
 
+    /// <summary>Opens a microphone for the voice link, delivering 20 ms frames.</summary>
+    public Voice.VoiceCapture? OpenVoiceCapture(string deviceId, Action<short[]> onFrame, out string? error)
+    {
+        error = null;
+        var enumerator = _enumerator;
+        if (enumerator is null) return null;
+
+        try { return Voice.VoiceCapture.Open(enumerator, deviceId, onFrame, out error); }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return null;
+        }
+    }
+
+    /// <summary>Opens a playback device for the voice link, pulling 20 ms frames as needed.</summary>
+    public Voice.VoiceRender? OpenVoiceRender(string deviceId, Func<short[]?> frameSource, out string? error)
+    {
+        error = null;
+        var enumerator = _enumerator;
+        if (enumerator is null) return null;
+
+        try { return Voice.VoiceRender.Open(enumerator, deviceId, frameSource, out error); }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return null;
+        }
+    }
+
     /// <summary>Sets only the Communications role, leaving Console/Multimedia untouched.</summary>
     public bool SetDefaultCommunications(string deviceId, out string? error)
     {

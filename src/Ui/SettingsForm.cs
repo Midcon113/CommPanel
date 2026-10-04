@@ -26,6 +26,7 @@ internal sealed class SettingsForm : Form
     private readonly ThemedCheckBox _autoFallback = new();
     private readonly ThemedCheckBox _showMeters = new();
     private readonly ThemedCheckBox _meterMic = new();
+    private readonly NumericUpDown _voicePort = new();
     private readonly ThemedCheckBox _watchHeadset = new();
     private readonly ThemedCheckBox _queryHeadset = new();
     private readonly ThemedCheckBox _returnToHeadset = new();
@@ -216,6 +217,24 @@ internal sealed class SettingsForm : Form
         Controls.Add(_bloomPreview);
         y += 34;
 
+        Controls.Add(SectionLabel("VOICE LINK PORT", margin, y, width));
+        y += 22;
+
+        _voicePort.SetBounds(margin, y, 90, 24);
+        _voicePort.BorderStyle = BorderStyle.FixedSingle;
+        _voicePort.BackColor = Surface;
+        _voicePort.ForeColor = Ink;
+        _voicePort.Font = new Font("Consolas", 10f);
+        _voicePort.TextAlign = HorizontalAlignment.Center;
+        _voicePort.Minimum = 1024;
+        _voicePort.Maximum = 65535;
+        Controls.Add(_voicePort);
+
+        Controls.Add(Hint("The UDP port a voice call listens on. Only change it if something "
+                          + "else already uses this one — your link code changes with it.",
+                          margin + 102, y - 4, width - 102, 34));
+        y += 34;
+
         var learn = DialogButton("Learn my headset…", margin, y, 150);
         learn.Click += (_, _) => LearnHeadset();
         Controls.Add(learn);
@@ -267,6 +286,7 @@ internal sealed class SettingsForm : Form
         _sizeFader.Value = SliderFromScale(_settings.SafeFontScale);
         RefreshBloomPreview();
         _meterMic.Checked = _settings.MeterMicrophone;
+        _voicePort.Value = Math.Clamp(_settings.SafeVoicePort, 1024, 65535);
         _watchHeadset.Checked = _settings.WatchHeadsetPower;
         _queryHeadset.Checked = _settings.QueryHeadsetStatus;
         _returnToHeadset.Checked = _settings.ReturnToHeadset;
@@ -296,6 +316,7 @@ internal sealed class SettingsForm : Form
         _settings.BloomIntensity = _bloomFader.Value;
         _settings.FontScale = ScaleFromSlider(_sizeFader.Value);
         _settings.MeterMicrophone = _meterMic.Checked;
+        _settings.VoicePort = (int)_voicePort.Value;
         _settings.WatchHeadsetPower = _watchHeadset.Checked;
         _settings.QueryHeadsetStatus = _queryHeadset.Checked;
         _settings.ReturnToHeadset = _returnToHeadset.Checked;

@@ -82,7 +82,7 @@ internal sealed class PlateButton : ChassisControl
             using (var outline = new Pen(Color.FromArgb(190, PanelTheme.EdgeShadow)))
                 g.DrawPath(outline, path);
 
-            if (ShowLamp && IsOn && PanelTheme.Bloom > 0.01f)
+            if (ShowLamp && IsOn && Enabled && PanelTheme.Bloom > 0.01f)
             {
                 using var glow = new Pen(Color.FromArgb(PanelTheme.BloomAlpha(90f), LampColor), 1.2f);
                 using var glowPath = PanelTheme.RoundedRect(
@@ -98,7 +98,7 @@ internal sealed class PlateButton : ChassisControl
         {
             int lampSize = Scaled(12);
             var lampRect = new RectangleF(pad, (Height - lampSize) / 2f, lampSize, lampSize);
-            PanelTheme.DrawLamp(g, lampRect, LampColor, IsOn, 0.75f);
+            PanelTheme.DrawLamp(g, lampRect, LampColor, IsOn && Enabled, 0.75f);
             textLeft = pad + lampSize + Scaled(7);
         }
 
@@ -107,9 +107,13 @@ internal sealed class PlateButton : ChassisControl
                     TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding |
                     (ShowLamp ? TextFormatFlags.Left : TextFormatFlags.HorizontalCenter);
 
-        Color textColor = ShowLamp && IsOn
-            ? PanelTheme.TextActive
-            : (_hot ? PanelTheme.Blend(PanelTheme.TextPrimary, Color.White, 0.2f) : PanelTheme.TextPrimary);
+        // A key that cannot be pressed has to look like one, or a click that does nothing
+        // reads as a fault rather than as "not yet".
+        Color textColor = !Enabled
+            ? Color.FromArgb(0x6E, 0x69, 0x5F)
+            : ShowLamp && IsOn
+                ? PanelTheme.TextActive
+                : (_hot ? PanelTheme.Blend(PanelTheme.TextPrimary, Color.White, 0.2f) : PanelTheme.TextPrimary);
 
         PanelTheme.DrawEngraved(g, Text, Font, textRect, textColor, flags);
 
