@@ -383,7 +383,7 @@ internal sealed partial class PanelForm
         bool wasTopMost = TopMost;
         TopMost = false;
 
-        using var dialog = new VoiceCallDialog(voice.LinkCode, _settings.LastVoicePeer);
+        using var dialog = new VoiceCallDialog(_settings, () => _voice?.LinkCode, _settings.LastVoicePeer);
         if (dialog.ShowDialog(this) == DialogResult.OK && dialog.Code is not null)
         {
             _settings.LastVoicePeer = dialog.Code;

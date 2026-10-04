@@ -11,162 +11,224 @@ namespace CommPanel.Ui;
 /// would look like neither. It also gives room to say what the code is and where to get it,
 /// which a 10-character box could not.
 /// </summary>
-internal sealed class VoiceCallDialog : Form
+internal sealed class VoiceCallDialog : PanelDialog
 {
-    private static readonly Color Background = Color.FromArgb(0x26, 0x24, 0x21);
-    private static readonly Color Surface = Color.FromArgb(0x33, 0x30, 0x2B);
-    private static readonly Color Ink = Color.FromArgb(0xE6, 0xDF, 0xCD);
-    private static readonly Color InkDim = Color.FromArgb(0x9C, 0x93, 0x84);
-    private static readonly Color Bad = Color.FromArgb(0xD8, 0x7A, 0x5E);
+    /// <summary>Close enough to the recess fill that the field reads as part of the panel.</summary>
+    private static readonly Color FieldBack = Color.FromArgb(0x22, 0x20, 0x1D);
 
-    private readonly TextBox _codeBox = new();
-    private readonly Label _problem = new();
-    private readonly Button _callButton = new();
+    private readonly Func<string?> _codeProvider;
+    private readonly TextBox _theirCode = new();
+    private readonly PlateButton _callKey = new();
+    private readonly PlateButton _cancelKey = new();
 
-    public VoiceCallDialog(string? myCode, string? lastPeer)
+    /// <summary>Address discovery may still be in flight when this opens; poll until it lands.</summary>
+    private readonly System.Windows.Forms.Timer _codePoll = new();
+
+    private Rectangle _introRect;
+    private Rectangle _yourCaption;
+    private Rectangle _yourRecess;
+    private Rectangle _theirCaption;
+    private Rectangle _theirRecess;
+    private Rectangle _problemRect;
+
+    private string? _shownCode;
+    private string _problem = string.Empty;
+
+    public VoiceCallDialog(AppSettings settings, Func<string?> codeProvider, string? lastPeer)
+        : base(settings, "CALL", "DIRECT VOICE LINK")
     {
-        Text = "Call";
-        Icon = AppIcon.Load(32);
-        FormBorderStyle = FormBorderStyle.FixedDialog;
-        StartPosition = FormStartPosition.CenterParent;
-        MaximizeBox = false;
-        MinimizeBox = false;
-        ShowInTaskbar = false;
-        AutoScaleMode = AutoScaleMode.Dpi;
-        BackColor = Background;
-        ForeColor = Ink;
-        Font = new Font("Segoe UI", 9f);
-        ClientSize = new Size(430, 252);
+        _codeProvider = codeProvider;
+        _shownCode = codeProvider();
 
-        BuildLayout(myCode, lastPeer);
+        BuildLayout(lastPeer);
+
+        _codePoll.Interval = 400;
+        _codePoll.Tick += (_, _) =>
+        {
+            string? code = _codeProvider();
+            if (code == _shownCode) return;
+            _shownCode = code;
+            Invalidate(_yourRecess);
+        };
+        _codePoll.Start();
     }
 
     /// <summary>The code or address the user entered, once it has been shown to parse.</summary>
     public string? Code { get; private set; }
 
-    private void BuildLayout(string? myCode, string? lastPeer)
+    private void BuildLayout(string? lastPeer)
     {
-        const int margin = 18;
-        int width = ClientSize.Width - margin * 2;
+        int margin = EdgeMargin;
+        int width = Scaled(420) - margin * 2;
+        int y = BodyTop;
 
-        Controls.Add(new Label
-        {
-            Text = "Call someone directly",
-            Bounds = new Rectangle(margin, margin, width, 22),
-            ForeColor = Ink,
-            Font = new Font("Segoe UI Semibold", 11f)
-        });
+        _introRect = new Rectangle(margin, y, width, Scaled(42));
+        y += Scaled(50);
 
-        Controls.Add(new Label
-        {
-            Text = "Give them your code, type theirs below, and you both press Call. "
-                 + "Audio goes straight between the two machines - no server, nothing recorded.",
-            Bounds = new Rectangle(margin, margin + 26, width, 36),
-            ForeColor = InkDim,
-            Font = new Font("Segoe UI", 8.5f)
-        });
+        int captionHeight = Scaled(16);
+        int fieldHeight = Scaled(34);
 
-        Controls.Add(new Label
-        {
-            Text = "YOUR CODE",
-            Bounds = new Rectangle(margin, margin + 70, width, 16),
-            ForeColor = InkDim,
-            Font = new Font("Segoe UI", 8f)
-        });
+        _yourCaption = new Rectangle(margin, y, width, captionHeight);
+        y += captionHeight + Scaled(4);
+        _yourRecess = new Rectangle(margin, y, width, fieldHeight);
+        y += fieldHeight + Scaled(12);
 
-        var mine = new TextBox
+        _theirCaption = new Rectangle(margin, y, width, captionHeight);
+        y += captionHeight + Scaled(4);
+        _theirRecess = new Rectangle(margin, y, width, fieldHeight);
+        y += fieldHeight + Scaled(6);
+
+        _problemRect = new Rectangle(margin, y, width, Scaled(18));
+        y += Scaled(18) + Scaled(12);
+
+        // The field sits inside the recess rather than drawing its own border, so the
+        // stamped lip around it is the only edge you see.
+        int inset = Scaled(5);
+        _theirCode.Bounds = new Rectangle(_theirRecess.Left + inset, _theirRecess.Top + inset,
+                                          _theirRecess.Width - inset * 2, _theirRecess.Height - inset * 2);
+        _theirCode.BorderStyle = BorderStyle.None;
+        _theirCode.BackColor = FieldBack;
+        _theirCode.ForeColor = PanelTheme.TextPrimary;
+        _theirCode.Font = TitleFont;
+        _theirCode.TextAlign = HorizontalAlignment.Center;
+        _theirCode.CharacterCasing = CharacterCasing.Upper;
+        _theirCode.Text = lastPeer ?? string.Empty;
+        _theirCode.TextChanged += (_, _) =>
         {
-            Text = myCode ?? "finding your code...",
-            Bounds = new Rectangle(margin, margin + 88, width, 26),
-            ReadOnly = true,
-            BorderStyle = BorderStyle.FixedSingle,
-            BackColor = Surface,
-            ForeColor = myCode is null ? InkDim : Ink,
-            Font = new Font("Consolas", 12f),
-            TextAlign = HorizontalAlignment.Center
+            if (_problem.Length == 0) return;
+            _problem = string.Empty;
+            Invalidate(_problemRect);
         };
-        // Read-only but selectable, so it can be copied out of here as well as from the panel.
-        Controls.Add(mine);
+        Controls.Add(_theirCode);
 
-        Controls.Add(new Label
+        int keyHeight = Scaled(30);
+        int callWidth = Scaled(104);
+        int cancelWidth = Scaled(92);
+
+        _callKey.Text = "CALL";
+        _callKey.Font = StencilFont;
+        _callKey.ShowLamp = true;
+        _callKey.IsOn = true;
+        _callKey.LampColor = PanelTheme.LampGreen;
+        _callKey.Bounds = new Rectangle(margin + width - callWidth, y, callWidth, keyHeight);
+        _callKey.Click += (_, _) => TryCall();
+        Controls.Add(_callKey);
+
+        _cancelKey.Text = "CANCEL";
+        _cancelKey.Font = StencilFont;
+        _cancelKey.Bounds = new Rectangle(_callKey.Left - Scaled(8) - cancelWidth, y, cancelWidth, keyHeight);
+        _cancelKey.Click += (_, _) => { DialogResult = DialogResult.Cancel; Close(); };
+        Controls.Add(_cancelKey);
+
+        y += keyHeight + margin;
+
+        ClientSize = new Size(Scaled(420), y);
+        PlaceHeader();
+        RebuildChassis();
+
+        // Caret at the end rather than a select-all: a Windows selection block is the one
+        // thing in here that cannot be themed, and a remembered code is usually the one you
+        // want to dial again anyway.
+        _theirCode.Select();
+        _theirCode.Select(_theirCode.TextLength, 0);
+    }
+
+    protected override void DrawChassis(Graphics g)
+    {
+        float radius = Scaled(5);
+        PanelTheme.DrawRecess(g, _yourRecess, radius);
+        PanelTheme.DrawRecess(g, _theirRecess, radius);
+
+        DrawBody(g, "Give them your code, type theirs below, and you both press CALL. "
+                  + "Audio goes straight between the two machines — no server, nothing recorded.",
+                 _introRect);
+
+        DrawCaption(g, "YOUR CODE", _yourCaption);
+        DrawCaption(g, "THEIR CODE", _theirCaption);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+
+        // Both of these change while the dialog is open, so they are painted rather than
+        // baked into the chassis: the code arrives when address discovery answers, and the
+        // problem line appears when an entry does not parse.
+        string code = _shownCode ?? "FINDING…";
+
+        PanelTheme.DrawEngraved(e.Graphics, code, TitleFont, _yourRecess,
+            _shownCode is null ? PanelTheme.TextSecondary : PanelTheme.TextPrimary,
+            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter |
+            TextFormatFlags.SingleLine);
+
+        if (_problem.Length > 0)
         {
-            Text = "THEIR CODE",
-            Bounds = new Rectangle(margin, margin + 124, width, 16),
-            ForeColor = InkDim,
-            Font = new Font("Segoe UI", 8f)
-        });
-
-        _codeBox.Bounds = new Rectangle(margin, margin + 142, width, 26);
-        _codeBox.BorderStyle = BorderStyle.FixedSingle;
-        _codeBox.BackColor = Surface;
-        _codeBox.ForeColor = Ink;
-        _codeBox.Font = new Font("Consolas", 12f);
-        _codeBox.TextAlign = HorizontalAlignment.Center;
-        _codeBox.CharacterCasing = CharacterCasing.Upper;
-        _codeBox.Text = lastPeer ?? string.Empty;
-        _codeBox.TextChanged += (_, _) => { _problem.Text = string.Empty; };
-        Controls.Add(_codeBox);
-
-        _problem.Bounds = new Rectangle(margin, margin + 172, width, 18);
-        _problem.ForeColor = Bad;
-        _problem.Font = new Font("Segoe UI", 8.5f);
-        Controls.Add(_problem);
-
-        int buttonTop = ClientSize.Height - margin - 28;
-
-        _callButton.Text = "Call";
-        _callButton.SetBounds(ClientSize.Width - margin - 100, buttonTop, 100, 28);
-        _callButton.FlatStyle = FlatStyle.Flat;
-        _callButton.BackColor = Surface;
-        _callButton.ForeColor = Ink;
-        _callButton.Click += OnCall;
-        Controls.Add(_callButton);
-
-        var cancel = new Button
-        {
-            Text = "Cancel",
-            Bounds = new Rectangle(_callButton.Left - 8 - 90, buttonTop, 90, 28),
-            FlatStyle = FlatStyle.Flat,
-            BackColor = Surface,
-            ForeColor = Ink,
-            DialogResult = DialogResult.Cancel
-        };
-        Controls.Add(cancel);
-
-        // Enter calls, Escape cancels. AcceptButton rather than a key handler so that the
-        // validation below runs on Enter exactly as it does on the button.
-        AcceptButton = _callButton;
-        CancelButton = cancel;
-
-        _codeBox.Select();
-        _codeBox.SelectAll();
+            TextRenderer.DrawText(e.Graphics, _problem, StencilFont, _problemRect,
+                PanelTheme.LampAmber,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
+        }
     }
 
     /// <summary>
     /// Validates before closing, so a mistyped code is corrected here rather than becoming a
     /// failed call the user has to work out for themselves.
     /// </summary>
-    private void OnCall(object? sender, EventArgs e)
+    private void TryCall()
     {
-        string entered = _codeBox.Text.Trim();
+        string entered = _theirCode.Text.Trim();
 
         if (entered.Length == 0)
         {
-            _problem.Text = "Type the code they read out to you.";
-            _codeBox.Select();
+            ShowProblem("TYPE THE CODE THEY READ OUT TO YOU");
             return;
         }
 
         if (!VoiceAddress.TryParse(entered, out _))
         {
-            _problem.Text = "That is not a link code. It looks like ABCDE-FGHIJ.";
-            _codeBox.Select();
-            _codeBox.SelectAll();
+            ShowProblem("NOT A LINK CODE — THEY LOOK LIKE ABCDE-FGHIJ");
             return;
         }
 
         Code = entered;
         DialogResult = DialogResult.OK;
         Close();
+    }
+
+    private void ShowProblem(string text)
+    {
+        _problem = text;
+        Invalidate(_problemRect);
+        _theirCode.Select();
+        _theirCode.Select(_theirCode.TextLength, 0);
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        // The keys here are stamped plates rather than buttons, so Enter and Escape are
+        // wired up by hand - AcceptButton and CancelButton only know about IButtonControl.
+        if (e.KeyCode == Keys.Escape)
+        {
+            DialogResult = DialogResult.Cancel;
+            Close();
+            e.Handled = true;
+        }
+        else if (e.KeyCode is Keys.Enter or Keys.Return)
+        {
+            TryCall();
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+        }
+
+        base.OnKeyDown(e);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _codePoll.Stop();
+            _codePoll.Dispose();
+        }
+        base.Dispose(disposing);
     }
 }
