@@ -318,6 +318,7 @@ internal sealed class VoiceSession : IDisposable, IVoiceRepair
                     CaptureFrames = delta,
                     CapturePeak = _capture?.TakeHealthPeak() ?? 0f,
                     IncomingPeak = link.TakeIncomingPeak(),
+                    StarvedReads = link.TakeStarvedReads(),
                     RenderPeak = _render?.TakeHealthPeak() ?? 0f,
                     HasCapture = _capture is not null,
                     HasRender = _render is not null,

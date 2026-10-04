@@ -481,7 +481,11 @@ it, so it does put that back by itself.
 
 #### What it will not do
 
-It will not call a quiet room a fault. A silent microphone and a dead microphone look
+It will not call a quiet room a fault, and it will not call a late network dead speakers.
+A jittery link and a broken output look identical from the outside - audio plainly arriving,
+silence coming out - so the only thing it trusts is whether the jitter buffer actually had
+audio to give. A second in which playback asked for a frame and got nothing says something
+about the network, not about the speakers, and is not counted against them. A silent microphone and a dead microphone look
 identical on a meter, so silence alone is never treated as a problem — only facts read from
 the device itself, like Windows having the microphone muted, or the capture stream going
 dead. Half a minute of nobody talking stays silent on the panel.

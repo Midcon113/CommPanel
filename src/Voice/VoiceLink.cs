@@ -71,6 +71,7 @@ internal sealed class VoiceLink : IDisposable
     private DateTime _lastHello = DateTime.MinValue;
     private DateTime _lastReport = DateTime.MinValue;
     private float _incomingPeak;
+    private int _starvedReads;
     private long _audioFramesReceived;
     private bool _prebuffering = true;
 
@@ -126,6 +127,16 @@ internal sealed class VoiceLink : IDisposable
     public LinkReport? PeerReport { get; private set; }
 
     public DateTime PeerReportAt { get; private set; } = DateTime.MinValue;
+
+    /// <summary>
+    /// How many times playback asked for a frame and the buffer had none ready, since the
+    /// last read.
+    ///
+    /// This is what tells a late network apart from dead speakers. Both look like silence
+    /// coming out of the machine while audio is plainly arriving; only one of them is the
+    /// speakers' fault, and a buffer that is being starved is the other one.
+    /// </summary>
+    public int TakeStarvedReads() => Interlocked.Exchange(ref _starvedReads, 0);
 
     /// <summary>Audio frames carrying real signal, counted since the call started.</summary>
     public long AudioFramesReceived => Interlocked.Read(ref _audioFramesReceived);
@@ -248,13 +259,19 @@ internal sealed class VoiceLink : IDisposable
         {
             if (_prebuffering)
             {
-                if (_received.Count < PrebufferFrames) return null;
+                if (_received.Count < PrebufferFrames)
+                {
+                    Interlocked.Increment(ref _starvedReads);
+                    return null;
+                }
+
                 _prebuffering = false;
             }
 
             if (_received.Count == 0)
             {
                 _prebuffering = true;
+                Interlocked.Increment(ref _starvedReads);
                 return null;
             }
 

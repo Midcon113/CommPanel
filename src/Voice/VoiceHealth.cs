@@ -45,6 +45,13 @@ internal sealed class VoiceVitals
     /// <summary>Loudest thing we actually pushed to the speakers in the last second.</summary>
     public required float RenderPeak { get; init; }
 
+    /// <summary>
+    /// How many times in the last second playback asked for audio and the jitter buffer had
+    /// none to give. Any at all means the network was late, which explains silence coming
+    /// out of the speakers without the speakers being at fault.
+    /// </summary>
+    public required int StarvedReads { get; init; }
+
     public required bool HasCapture { get; init; }
     public required bool HasRender { get; init; }
 
@@ -130,6 +137,7 @@ internal sealed class VoiceHealth
     private int _captureStallSeconds;
     private int _micMutedSeconds;
     private int _notReceivingSeconds;
+    private int _notHearingSeconds;
 
     private int _repairStep;
     private bool _waitingOnUser;
@@ -181,7 +189,11 @@ internal sealed class VoiceHealth
         // ---- our own output -------------------------------------------------
         // Their voice is arriving with real signal in it and nothing is reaching the
         // speakers. This is the one fault that is certain rather than inferred.
-        if (theirVoiceArriving && !ourSpeakersWorking && vitals.HasRender)
+        // Silence from the speakers only counts against them when the buffer had audio to
+        // give. While the jitter buffer refills after a late packet the renderer is handed
+        // silence deliberately, and on a real link that happens constantly - so a second
+        // with any starved read in it is evidence about the network, not the speakers.
+        if (theirVoiceArriving && !ourSpeakersWorking && vitals.HasRender && vitals.StarvedReads == 0)
             _outputFaultSeconds++;
         else
             _outputFaultSeconds = 0;
@@ -210,6 +222,14 @@ internal sealed class VoiceHealth
         else
             _notReceivingSeconds = 0;
 
+        // They are getting us but their speakers are producing nothing. Counted like every
+        // other fault: their playback level legitimately drops to nothing between words, and
+        // acting on a single reading of it announced a fault on every pause.
+        if (talking && theyHearUs && !theirOutputWorks)
+            _notHearingSeconds++;
+        else
+            _notHearingSeconds = 0;
+
         // ---- act, most certain fault first ----------------------------------
         if (_captureStallSeconds >= FaultSeconds)
         {
@@ -237,7 +257,7 @@ internal sealed class VoiceHealth
             return;
         }
 
-        if (talking && theyHearUs && !theirOutputWorks)
+        if (_notHearingSeconds >= FaultSeconds)
         {
             Settle(VoiceHealthCode.TheyAreNotHearing,
                    "THEY ARE RECEIVING YOU BUT THEIR PLAYBACK IS SILENT — THEIR END IS CHECKING");
@@ -368,6 +388,7 @@ internal sealed class VoiceHealth
         _captureStallSeconds = 0;
         _micMutedSeconds = 0;
         _notReceivingSeconds = 0;
+        _notHearingSeconds = 0;
         ResetRepairs();
     }
 
