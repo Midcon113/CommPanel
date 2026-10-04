@@ -1156,7 +1156,7 @@ internal sealed partial class PanelForm : Form
 
         string lostName = lost?.ShortName ?? (isOutput ? "The output device" : "The input device");
 
-        using var dialog = new OfflineFallbackDialog(lostName, isOutput, ranked);
+        using var dialog = new OfflineFallbackDialog(_settings, lostName, isOutput, ranked);
         bool wasTopMost = TopMost;
         TopMost = false;
 

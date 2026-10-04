@@ -14,6 +14,12 @@ internal static class PanelTheme
     public static readonly Color ChassisTop = Color.FromArgb(0x3C, 0x38, 0x32);
     public static readonly Color ChassisBottom = Color.FromArgb(0x23, 0x21, 0x1E);
     public static readonly Color PlateRecess = Color.FromArgb(0x1E, 0x1C, 0x1A);
+
+    /// <summary>Interior of a field or list well: close enough to a drawn recess to blend.</summary>
+    public static readonly Color FieldBack = Color.FromArgb(0x22, 0x20, 0x1D);
+
+    /// <summary>Selected row in a list well.</summary>
+    public static readonly Color RowSelected = Color.FromArgb(0x3A, 0x41, 0x33);
     public static readonly Color EdgeHighlight = Color.FromArgb(0x6A, 0x64, 0x59);
     public static readonly Color EdgeShadow = Color.FromArgb(0x13, 0x12, 0x10);
     public static readonly Color ScrewMetal = Color.FromArgb(0x8C, 0x84, 0x74);

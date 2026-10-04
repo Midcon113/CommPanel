@@ -26,7 +26,7 @@ internal class PanelDialog : Form
 
     private Bitmap? _chassis;
 
-    protected PanelDialog(AppSettings settings, string title, string subtitle)
+    protected PanelDialog(AppSettings settings, string title, string subtitle, int logicalHeight = 0)
     {
         Settings = settings;
         _title = title;
@@ -45,7 +45,9 @@ internal class PanelDialog : Form
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
                  ControlStyles.OptimizedDoubleBuffer, true);
 
-        float scale = settings.SafeFontScale;
+        DialogScale = FitToScreen(settings.SafeFontScale, logicalHeight);
+
+        float scale = DialogScale;
         TitleFont = PanelTheme.TitleFont(scale);
         LabelFont = PanelTheme.LabelFont(scale);
         SmallFont = PanelTheme.SmallFont(scale);
@@ -55,11 +57,40 @@ internal class PanelDialog : Form
         _close.Text = "✕";
         _close.Font = LabelFont;
         _close.Destructive = true;
+
+        // The close key must not take the focus a dialog opens with: a dotted ring round the
+        // ✕ is both ugly and the wrong first thing for Enter to land on.
+        _close.TabStop = false;
         _close.Click += (_, _) => { DialogResult = DialogResult.Cancel; Close(); };
         Controls.Add(_close);
     }
 
     protected AppSettings Settings { get; }
+
+    /// <summary>
+    /// The size this dialog is actually drawn at: the user's panel size, reduced if that
+    /// would make the window taller than the screen it has to fit on. A settings dialog at
+    /// 200%% on a 1080p monitor would otherwise run off the bottom with its Save key on it.
+    /// </summary>
+    protected float DialogScale { get; }
+
+    private static float FitToScreen(float wanted, int logicalHeight)
+    {
+        var working = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1024, 768);
+        return Fit(wanted, logicalHeight, working.Height);
+    }
+
+    /// <summary>
+    /// The scale arithmetic, separated from the screen so it can be checked against sizes
+    /// this machine does not have. Never enlarges, and never shrinks below 0.8.
+    /// </summary>
+    internal static float Fit(float wanted, int logicalHeight, int availableHeight)
+    {
+        if (logicalHeight <= 0 || availableHeight <= 0) return wanted;
+
+        float room = availableHeight * 0.94f / logicalHeight;
+        return Math.Clamp(Math.Min(wanted, room), Math.Min(0.8f, wanted), wanted);
+    }
 
     protected Font TitleFont { get; }
     protected Font LabelFont { get; }
@@ -73,7 +104,7 @@ internal class PanelDialog : Form
 
     /// <summary>A logical measurement scaled for both DPI and the user's chosen panel size.</summary>
     protected int Scaled(int logical) =>
-        LogicalToDeviceUnits((int)MathF.Round(logical * Settings.SafeFontScale));
+        LogicalToDeviceUnits((int)MathF.Round(logical * DialogScale));
 
     /// <summary>
     /// Called to draw the engraved, unchanging parts of this dialog into the chassis bitmap:
@@ -119,7 +150,7 @@ internal class PanelDialog : Form
             if (control is ChassisControl chassisControl)
             {
                 chassisControl.Backdrop = _chassis;
-                chassisControl.UiScale = Settings.SafeFontScale;
+                chassisControl.UiScale = DialogScale;
                 chassisControl.Invalidate();
             }
         }
@@ -200,6 +231,50 @@ internal class PanelDialog : Form
             if (client.Y >= 0 && client.Y < Scaled(HeaderHeight))
                 m.Result = new IntPtr(HTCAPTION);
         }
+    }
+
+    /// <summary>Dresses a text field so it reads as the inside of a drawn recess.</summary>
+    protected void StyleField(TextBoxBase field)
+    {
+        field.BorderStyle = BorderStyle.None;
+        field.BackColor = PanelTheme.FieldBack;
+        field.ForeColor = PanelTheme.TextPrimary;
+        field.Font = LabelFont;
+    }
+
+    /// <summary>Dresses a list so it reads as the inside of a drawn recess.</summary>
+    protected void StyleList(PlateList list)
+    {
+        list.Font = SmallFont;
+        list.UiScale = DialogScale;
+    }
+
+    /// <summary>
+    /// The area inside a recess, leaving the stamped lip showing. Controls that draw their
+    /// own background go here rather than filling the recess edge to edge.
+    /// </summary>
+    protected Rectangle Inside(Rectangle recess)
+    {
+        int inset = Scaled(4);
+        return new Rectangle(recess.Left + inset, recess.Top + inset,
+                             recess.Width - inset * 2, recess.Height - inset * 2);
+    }
+
+    /// <summary>A stamped key, already in this dialog's font and added to it.</summary>
+    protected PlateButton Key(string text, Rectangle bounds, EventHandler onClick)
+    {
+        var key = new PlateButton { Text = text, Font = StencilFont, Bounds = bounds };
+        key.Click += onClick;
+        Controls.Add(key);
+        return key;
+    }
+
+    /// <summary>A setting toggle, already in this dialog's font and added to it.</summary>
+    protected PlateCheck Toggle(string text, Rectangle bounds)
+    {
+        var check = new PlateCheck { Text = text, Font = SmallFont, Bounds = bounds };
+        Controls.Add(check);
+        return check;
     }
 
     /// <summary>Draws a caption above a field, in the stencil the panel labels everything in.</summary>

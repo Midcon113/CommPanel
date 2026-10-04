@@ -10,99 +10,106 @@ namespace CommPanel.Ui;
 /// the result trustworthy: a byte that really encodes power holds the same value in both,
 /// while counters, battery drift and stray traffic from other devices do not.
 /// </summary>
-internal sealed class LearnHeadsetForm : Form
+internal sealed class LearnHeadsetForm : PanelDialog
 {
-    private static readonly Color Background = Color.FromArgb(0x26, 0x24, 0x21);
-    private static readonly Color Surface = Color.FromArgb(0x33, 0x30, 0x2B);
-    private static readonly Color Ink = Color.FromArgb(0xE6, 0xDF, 0xCD);
-    private static readonly Color InkDim = Color.FromArgb(0x9C, 0x93, 0x84);
+    private const int LogicalHeight = 452;
 
     private readonly List<AudioDevice> _outputs;
-    private readonly ComboBox _deviceBox = new();
-    private readonly Label _stepLabel = new();
-    private readonly Label _instruction = new();
-    private readonly Label _status = new();
-    private readonly Button _next = new();
-    private readonly Button _cancel = new();
+    private readonly PlateList _deviceList = new();
+    private readonly PlateButton _next;
+
+    private Rectangle _stepRect;
+    private Rectangle _instructionRect;
+    private Rectangle _pickCaption;
+    private Rectangle _listRecess;
+    private Rectangle _statusRect;
 
     private HeadsetLearnSession? _session;
     private int _step;
+    private string _stepText = string.Empty;
+    private string _instruction = string.Empty;
+    private string _status = string.Empty;
 
     /// <summary>The learned profile, valid only when the dialog returns OK.</summary>
     public HeadsetProfile? Result { get; private set; }
 
-    public LearnHeadsetForm(List<AudioDevice> outputs)
+    public LearnHeadsetForm(AppSettings settings, List<AudioDevice> outputs)
+        : base(settings, "LEARN MY HEADSET", "TEACH THE PANEL YOUR POWER SIGNAL", LogicalHeight)
     {
         _outputs = outputs;
-
-        Text = "Learn my headset";
-        Icon = AppIcon.Load(32);
-        FormBorderStyle = FormBorderStyle.FixedDialog;
-        StartPosition = FormStartPosition.CenterParent;
-        MaximizeBox = false;
-        MinimizeBox = false;
-        ShowInTaskbar = false;
-        AutoScaleMode = AutoScaleMode.Dpi;
-        BackColor = Background;
-        ForeColor = Ink;
-        Font = new Font("Segoe UI", 9f);
-        ClientSize = new Size(520, 404);
-
-        BuildLayout();
+        _next = BuildLayout();
         ShowStep();
     }
 
-    private void BuildLayout()
+    private PlateButton BuildLayout()
     {
-        const int margin = 18;
-        int width = ClientSize.Width - margin * 2;
+        int margin = EdgeMargin;
+        int width = Scaled(520) - margin * 2;
+        int y = BodyTop;
 
-        _stepLabel.SetBounds(margin, margin, width, 18);
-        _stepLabel.ForeColor = Color.FromArgb(0xC9, 0xBF, 0xA8);
-        _stepLabel.Font = new Font("Consolas", 8.25f, FontStyle.Bold);
-        Controls.Add(_stepLabel);
+        _stepRect = new Rectangle(margin, y, width, Scaled(18));
+        y += Scaled(24);
 
-        _instruction.SetBounds(margin, margin + 26, width, 200);
-        _instruction.ForeColor = Ink;
-        _instruction.Font = new Font("Segoe UI", 10f);
-        Controls.Add(_instruction);
+        _instructionRect = new Rectangle(margin, y, width, Scaled(150));
+        y += Scaled(158);
 
-        var pickLabel = new Label
-        {
-            Text = "Which output device is your headset?",
-            Bounds = new Rectangle(margin, margin + 232, width, 18),
-            ForeColor = InkDim,
-            Font = new Font("Segoe UI", 8.25f)
-        };
-        Controls.Add(pickLabel);
+        _pickCaption = new Rectangle(margin, y, width, Scaled(16));
+        y += Scaled(20);
 
-        _deviceBox.SetBounds(margin, margin + 254, width, 24);
-        _deviceBox.DropDownStyle = ComboBoxStyle.DropDownList;
-        _deviceBox.BackColor = Surface;
-        _deviceBox.ForeColor = Ink;
-        _deviceBox.FlatStyle = FlatStyle.Flat;
-        foreach (var device in _outputs) _deviceBox.Items.Add(device.FullName);
-        if (_deviceBox.Items.Count > 0) _deviceBox.SelectedIndex = GuessHeadsetIndex();
-        Controls.Add(_deviceBox);
+        _listRecess = new Rectangle(margin, y, width, Scaled(84));
+        _deviceList.Bounds = Inside(_listRecess);
+        StyleList(_deviceList);
+        foreach (var device in _outputs) _deviceList.Add(device.FullName);
+        if (_deviceList.Items.Count > 0) _deviceList.SelectedIndex = GuessHeadsetIndex();
+        Controls.Add(_deviceList);
+        y += _listRecess.Height + Scaled(10);
 
-        _status.SetBounds(margin, margin + 288, width, 34);
-        _status.ForeColor = InkDim;
-        _status.Font = new Font("Consolas", 8.25f);
-        Controls.Add(_status);
+        _statusRect = new Rectangle(margin, y, width, Scaled(20));
+        y += Scaled(28);
 
-        _next.SetBounds(ClientSize.Width - margin - 110, ClientSize.Height - margin - 28, 110, 28);
-        StyleButton(_next);
-        _next.Click += (_, _) => Advance();
-        Controls.Add(_next);
+        int keyHeight = Scaled(30);
+        int nextWidth = Scaled(112);
+        int cancelWidth = Scaled(92);
 
-        _cancel.Text = "Cancel";
-        _cancel.SetBounds(ClientSize.Width - margin - 200, ClientSize.Height - margin - 28, 84, 28);
-        StyleButton(_cancel);
-        _cancel.Click += (_, _) => { DialogResult = DialogResult.Cancel; Close(); };
-        Controls.Add(_cancel);
+        var next = Key("START", new Rectangle(margin + width - nextWidth, y, nextWidth, keyHeight),
+                       (_, _) => Advance());
+        next.ShowLamp = true;
+        next.IsOn = true;
+        next.LampColor = PanelTheme.LampGreen;
 
-        AcceptButton = _next;
-        CancelButton = _cancel;
+        Key("CANCEL", new Rectangle(next.Left - Scaled(8) - cancelWidth, y, cancelWidth, keyHeight),
+            (_, _) => { DialogResult = DialogResult.Cancel; Close(); });
+
+        y += keyHeight + margin;
+
+        ClientSize = new Size(Scaled(520), y);
+        PlaceHeader();
+        RebuildChassis();
+
+        return next;
+    }
+
+    protected override void DrawChassis(Graphics g)
+    {
+        PanelTheme.DrawRecess(g, _listRecess, Scaled(5));
+        DrawCaption(g, "WHICH OUTPUT IS YOUR HEADSET", _pickCaption);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+
+        // The step, the instruction and the capture count all change as the wizard runs, so
+        // they are painted here rather than baked into the chassis bitmap.
+        DrawCaption(e.Graphics, _stepText, _stepRect);
+
+        TextRenderer.DrawText(e.Graphics, _instruction, LabelFont, _instructionRect,
+            PanelTheme.TextPrimary,
+            TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.WordBreak);
+
+        TextRenderer.DrawText(e.Graphics, _status, StencilFont, _statusRect,
+            Color.FromArgb(170, PanelTheme.TextSecondary),
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
     }
 
     /// <summary>Preselects the most headset-looking output, so the common case needs no thought.</summary>
@@ -129,7 +136,7 @@ internal sealed class LearnHeadsetForm : Form
 
     private string SelectedAdapter()
     {
-        int index = _deviceBox.SelectedIndex;
+        int index = _deviceList.SelectedIndex;
         if (index < 0 || index >= _outputs.Count) return string.Empty;
 
         var device = _outputs[index];
@@ -141,58 +148,58 @@ internal sealed class LearnHeadsetForm : Form
         switch (_step)
         {
             case 0:
-                _stepLabel.Text = "STEP 1 OF 4";
-                _instruction.Text =
+                _stepText = "STEP 1 OF 4";
+                _instruction =
                     "This teaches CommPanel how your headset reports being switched on and off.\r\n\r\n" +
                     "It is needed because a wireless base station stays plugged in whether or not the " +
                     "headset is on, so Windows cannot tell the difference.\r\n\r\n" +
-                    "Pick your headset below, make sure it is switched ON, then click Start.\r\n\r\n" +
+                    "Pick your headset below, make sure it is switched ON, then press START.\r\n\r\n" +
                     "Nothing is written to the device at any point — CommPanel only listens.";
-                _next.Text = "Start";
-                _deviceBox.Enabled = true;
+                _next.Text = "START";
+                _deviceList.Enabled = true;
                 break;
 
             case 1:
-                _stepLabel.Text = "STEP 2 OF 4 — CAPTURING";
-                _instruction.Text =
+                _stepText = "STEP 2 OF 4 — CAPTURING";
+                _instruction =
                     "Switch the headset OFF now.\r\n\r\n" +
-                    "Wait for it to finish powering down — a few seconds — then click Next.";
-                _next.Text = "Next";
-                _deviceBox.Enabled = false;
+                    "Wait for it to finish powering down — a few seconds — then press NEXT.";
+                _next.Text = "NEXT";
+                _deviceList.Enabled = false;
                 break;
 
             case 2:
-                _stepLabel.Text = "STEP 3 OF 4 — CAPTURING";
-                _instruction.Text =
+                _stepText = "STEP 3 OF 4 — CAPTURING";
+                _instruction =
                     "Now switch the headset back ON.\r\n\r\n" +
-                    "Wait until it has fully connected, then click Next.";
-                _next.Text = "Next";
+                    "Wait until it has fully connected, then press NEXT.";
+                _next.Text = "NEXT";
                 break;
 
             case 3:
-                _stepLabel.Text = "STEP 4 OF 4 — CAPTURING";
-                _instruction.Text =
+                _stepText = "STEP 4 OF 4 — CAPTURING";
+                _instruction =
                     "Switch the headset OFF once more.\r\n\r\n" +
                     "This second power-off is what confirms the reading is genuine rather than a " +
-                    "coincidence. Wait for it to power down, then click Finish.\r\n\r\n" +
+                    "coincidence. Wait for it to power down, then press FINISH.\r\n\r\n" +
                     "You can switch it back on afterwards.";
-                _next.Text = "Finish";
+                _next.Text = "FINISH";
                 break;
         }
 
         UpdateStatus();
+        _next.Invalidate();
+        Invalidate();
     }
 
     private void UpdateStatus()
     {
-        if (_session is null)
-        {
-            _status.Text = string.Empty;
-            return;
-        }
+        _status = _session is null
+            ? string.Empty
+            : string.Format("LISTENING ON {0} INTERFACES · {1} REPORTS CAPTURED",
+                            _session.InterfaceCount, _session.CaptureCount);
 
-        _status.Text = string.Format("listening on {0} interfaces · {1} reports captured",
-            _session.InterfaceCount, _session.CaptureCount);
+        Invalidate(_statusRect);
     }
 
     private void Advance()
@@ -286,20 +293,22 @@ internal sealed class LearnHeadsetForm : Form
     private void Warn(string message) =>
         MessageBox.Show(this, message, "Learn my headset", MessageBoxButtons.OK, MessageBoxIcon.Warning);
 
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        if (e.KeyCode == Keys.Escape)
+        {
+            DialogResult = DialogResult.Cancel;
+            Close();
+            e.Handled = true;
+        }
+
+        base.OnKeyDown(e);
+    }
+
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         _session?.Dispose();
         _session = null;
         base.OnFormClosed(e);
-    }
-
-    private static void StyleButton(Button button)
-    {
-        button.FlatStyle = FlatStyle.Flat;
-        button.BackColor = Surface;
-        button.ForeColor = Ink;
-        button.UseVisualStyleBackColor = false;
-        button.FlatAppearance.BorderColor = Color.FromArgb(0x55, 0x50, 0x48);
-        button.FlatAppearance.MouseOverBackColor = Color.FromArgb(0x45, 0x41, 0x39);
     }
 }

@@ -5,43 +5,51 @@ namespace CommPanel.Ui;
 
 /// <summary>
 /// Settings dialog: which programs pop the panel open, which devices appear on it, and how
-/// CommPanel behaves in the background. Deliberately plain - the panel is the show piece,
-/// this is the maintenance hatch behind it.
+/// CommPanel behaves in the background.
+///
+/// Laid out in two columns rather than one long strip. A single column of everything here
+/// stands about 640 logical units tall, which at a large panel size would run off the bottom
+/// of the screen with the Save key on it.
 /// </summary>
-internal sealed class SettingsForm : Form
+internal sealed class SettingsForm : PanelDialog
 {
-    private static readonly Color Background = Color.FromArgb(0x26, 0x24, 0x21);
-    private static readonly Color Surface = Color.FromArgb(0x33, 0x30, 0x2B);
-    private static readonly Color Ink = Color.FromArgb(0xE6, 0xDF, 0xCD);
-    private static readonly Color InkDim = Color.FromArgb(0x9C, 0x93, 0x84);
+    /// <summary>Roughly how tall this gets, so the base can shrink it to fit the screen.</summary>
+    private const int LogicalHeight = 620;
 
     private readonly AppSettings _settings;
 
-    private readonly ListBox _watchList = new();
+    private readonly PlateList _watchList = new();
     private readonly TextBox _newProcess = new();
-    private readonly CheckedListBox _deviceList = new();
+    private readonly PlateList _deviceList = new();
+    private readonly TextBox _voicePort = new();
 
-    private readonly ThemedCheckBox _watchEnabled = new();
-    private readonly ThemedCheckBox _linkComms = new();
-    private readonly ThemedCheckBox _autoFallback = new();
-    private readonly ThemedCheckBox _showMeters = new();
-    private readonly ThemedCheckBox _meterMic = new();
-    private readonly NumericUpDown _voicePort = new();
-    private readonly ThemedCheckBox _watchHeadset = new();
-    private readonly ThemedCheckBox _queryHeadset = new();
-    private readonly ThemedCheckBox _returnToHeadset = new();
-    private readonly ThemedCheckBox _startInTray = new();
-    private readonly ThemedCheckBox _autoHide = new();
-    private readonly ThemedCheckBox _hotkey = new();
-    private readonly ThemedCheckBox _startWithWindows = new();
+    private PlateCheck _watchEnabled = null!;
+    private PlateCheck _linkComms = null!;
+    private PlateCheck _autoFallback = null!;
+    private PlateCheck _showMeters = null!;
+    private PlateCheck _meterMic = null!;
+    private PlateCheck _watchHeadset = null!;
+    private PlateCheck _queryHeadset = null!;
+    private PlateCheck _returnToHeadset = null!;
+    private PlateCheck _startInTray = null!;
+    private PlateCheck _autoHide = null!;
+    private PlateCheck _hotkey = null!;
+    private PlateCheck _startWithWindows = null!;
 
     private readonly List<AudioDevice> _allDevices = new();
     private readonly List<AudioDevice> _outputDevices = new();
-    private readonly Label _headsetStatus = new();
 
     private readonly VolumeFader _bloomFader = new();
     private readonly VolumeFader _sizeFader = new();
     private readonly LevelMeter _bloomPreview = new();
+
+    // Engraved regions, drawn into the chassis once.
+    private readonly List<(string Text, Rectangle Bounds)> _captions = new();
+    private readonly List<(string Text, Rectangle Bounds)> _hints = new();
+    private readonly List<Rectangle> _recesses = new();
+
+    private Rectangle _headsetStatusRect;
+    private string _headsetStatus = string.Empty;
 
     /// <summary>Applies a size while the user drags, so the choice is made by eye.</summary>
     public Action<float>? PreviewScale { get; set; }
@@ -55,9 +63,10 @@ internal sealed class SettingsForm : Form
     private readonly float _bloomOnEntry = PanelTheme.Bloom;
 
     /// <summary>Working copy: only written back to settings when the user saves.</summary>
-    private List<HeadsetProfile> _headsetProfiles = new();
+    private List<HeadsetProfile> _headsetProfiles;
 
     public SettingsForm(AppSettings settings, List<AudioDevice> outputs, List<AudioDevice> inputs)
+        : base(settings, "SETTINGS", "COMMPANEL CONFIGURATION", LogicalHeight)
     {
         _settings = settings;
         _allDevices.AddRange(outputs);
@@ -65,144 +74,156 @@ internal sealed class SettingsForm : Form
         _outputDevices.AddRange(outputs);
         _headsetProfiles = settings.HeadsetProfiles.Select(Clone).ToList();
 
-        Text = "CommPanel Settings";
-        Icon = AppIcon.Load(32);
-        FormBorderStyle = FormBorderStyle.FixedDialog;
-        StartPosition = FormStartPosition.CenterParent;
-        MaximizeBox = false;
-        MinimizeBox = false;
-        ShowInTaskbar = false;
-        AutoScaleMode = AutoScaleMode.Dpi;
-        BackColor = Background;
-        ForeColor = Ink;
-        Font = new Font("Segoe UI", 9f);
-        ClientSize = new Size(560, 610);
-
         BuildLayout();
-        LoadValues(outputs, inputs);
+        LoadValues();
     }
 
     private void BuildLayout()
     {
-        int margin = 16;
-        int width = ClientSize.Width - margin * 2;
-        int y = margin;
+        int margin = EdgeMargin;
+        int total = Scaled(880);
+        int gutter = Scaled(18);
+        int column = (total - margin * 2 - gutter) / 2;
+        int leftX = margin;
+        int rightX = margin + column + gutter;
 
-        Controls.Add(SectionLabel("PROGRAMS THAT OPEN THE PANEL", margin, y, width));
-        y += 22;
+        int bottom = Math.Max(BuildLeftColumn(leftX, column), BuildRightColumn(rightX, column));
 
-        Controls.Add(Hint("When one of these comes to the foreground, CommPanel appears on top " +
-                          "without stealing focus, so you can re-route while it loads.",
-                          margin, y, width, 34));
-        y += 38;
+        int keyHeight = Scaled(30);
+        int keyTop = bottom + Scaled(14);
+        int saveWidth = Scaled(96);
+        int cancelWidth = Scaled(96);
 
-        _watchList.SetBounds(margin, y, width, 120);
-        _watchList.BackColor = Surface;
-        _watchList.ForeColor = Ink;
-        _watchList.BorderStyle = BorderStyle.FixedSingle;
-        _watchList.IntegralHeight = false;
+        var save = Key("SAVE", new Rectangle(total - margin - saveWidth, keyTop, saveWidth, keyHeight),
+                       (_, _) => Commit());
+        save.ShowLamp = true;
+        save.IsOn = true;
+        save.LampColor = PanelTheme.LampGreen;
+
+        Key("CANCEL", new Rectangle(save.Left - Scaled(8) - cancelWidth, keyTop, cancelWidth, keyHeight),
+            (_, _) =>
+            {
+                PanelTheme.Bloom = _bloomOnEntry; // discard live bloom changes on cancel
+                DialogResult = DialogResult.Cancel;
+                Close();
+            });
+
+        ClientSize = new Size(total, keyTop + keyHeight + margin);
+        PlaceHeader();
+        RebuildChassis();
+    }
+
+    private int BuildLeftColumn(int x, int width)
+    {
+        int y = BodyTop;
+
+        y = Caption("PROGRAMS THAT OPEN THE PANEL", x, y, width);
+        y = Hint("When one of these comes to the foreground, CommPanel appears on top without "
+               + "stealing focus, so you can re-route while it loads.", x, y, width, 34);
+
+        var listRecess = new Rectangle(x, y, width, Scaled(104));
+        _recesses.Add(listRecess);
+        _watchList.Bounds = Inside(listRecess);
+        StyleList(_watchList);
         Controls.Add(_watchList);
-        y += 126;
+        y += listRecess.Height + Scaled(10);
 
-        _newProcess.SetBounds(margin, y, width - 250, 24);
-        _newProcess.BackColor = Surface;
-        _newProcess.ForeColor = Ink;
-        _newProcess.BorderStyle = BorderStyle.FixedSingle;
+        var fieldRecess = new Rectangle(x, y, width, Scaled(30));
+        _recesses.Add(fieldRecess);
+        _newProcess.Bounds = Inside(fieldRecess);
+        StyleField(_newProcess);
         _newProcess.PlaceholderText = "game.exe";
         _newProcess.KeyDown += (_, e) =>
         {
-            if (e.KeyCode == Keys.Enter)
-            {
-                AddWatchEntry(_newProcess.Text);
-                e.SuppressKeyPress = true;
-            }
+            if (e.KeyCode != Keys.Enter) return;
+            AddWatchEntry(_newProcess.Text);
+            e.SuppressKeyPress = true;
+            e.Handled = true;
         };
         Controls.Add(_newProcess);
+        y += fieldRecess.Height + Scaled(8);
 
-        var addButton = DialogButton("Add", margin + width - 246, y, 74);
-        addButton.Click += (_, _) => AddWatchEntry(_newProcess.Text);
-        Controls.Add(addButton);
+        int keyHeight = Scaled(28);
+        int third = (width - Scaled(16)) / 3;
 
-        var browseButton = DialogButton("Browse…", margin + width - 166, y, 80);
-        browseButton.Click += (_, _) => BrowseForProgram();
-        Controls.Add(browseButton);
-
-        var removeButton = DialogButton("Remove", margin + width - 80, y, 80);
-        removeButton.Click += (_, _) =>
+        Key("ADD", new Rectangle(x, y, third, keyHeight), (_, _) => AddWatchEntry(_newProcess.Text));
+        Key("BROWSE…", new Rectangle(x + third + Scaled(8), y, third, keyHeight), (_, _) => BrowseForProgram());
+        Key("REMOVE", new Rectangle(x + (third + Scaled(8)) * 2, y, third, keyHeight), (_, _) =>
         {
-            if (_watchList.SelectedIndex >= 0) _watchList.Items.RemoveAt(_watchList.SelectedIndex);
-        };
-        Controls.Add(removeButton);
-        y += 36;
+            if (_watchList.SelectedIndex >= 0) _watchList.RemoveAt(_watchList.SelectedIndex);
+        });
+        y += keyHeight + Scaled(12);
 
-        _watchEnabled.SetBounds(margin, y, width, 22);
-        _watchEnabled.Text = "Watch for these programs while running in the background";
-        StyleCheckBox(_watchEnabled);
-        Controls.Add(_watchEnabled);
-        y += 32;
+        _watchEnabled = Toggle("Watch for these programs in the background",
+                               new Rectangle(x, y, width, Scaled(20)));
+        y += Scaled(20) + Scaled(16);
 
-        Controls.Add(SectionLabel("DEVICES SHOWN ON THE PANEL", margin, y, width));
-        y += 24;
+        y = Caption("DEVICES SHOWN ON THE PANEL", x, y, width);
+        y = Hint("Click a lamp to show or hide that device. Hidden devices are never switched "
+               + "to automatically.", x, y, width, 30);
 
-        _deviceList.SetBounds(margin, y, width, 130);
-        _deviceList.BackColor = Surface;
-        _deviceList.ForeColor = Ink;
-        _deviceList.BorderStyle = BorderStyle.FixedSingle;
-        _deviceList.CheckOnClick = true;
-        _deviceList.IntegralHeight = false;
+        var deviceRecess = new Rectangle(x, y, width, Scaled(148));
+        _recesses.Add(deviceRecess);
+        _deviceList.Bounds = Inside(deviceRecess);
+        _deviceList.ShowLamps = true;
+        StyleList(_deviceList);
         Controls.Add(_deviceList);
-        y += 140;
 
-        Controls.Add(SectionLabel("BEHAVIOUR", margin, y, width));
-        y += 24;
+        return deviceRecess.Bottom;
+    }
 
-        foreach (var (box, text) in new[]
+    private int BuildRightColumn(int x, int width)
+    {
+        int y = BodyTop;
+
+        y = Caption("BEHAVIOUR", x, y, width);
+
+        int rowHeight = Scaled(20);
+        int rowStep = Scaled(23);
+
+        PlateCheck Row(string text)
         {
-            (_showMeters, "Show level meters and volume faders on the panel"),
-            (_meterMic, "Meter the microphone — opens the mic while the panel is visible"),
-            (_linkComms, "Switch the communications device along with the default device"),
-            (_autoFallback, "Switch to another device when the current one goes offline"),
-            (_watchHeadset, "Detect a wireless headset being powered off"),
-            (_queryHeadset, "Ask the headset its state at launch — sends one request to it"),
-            (_returnToHeadset, "Switch back to the headset when it is powered on again"),
-            (_hotkey, "Global hotkey  Ctrl + Alt + C  shows or hides the panel"),
-            (_autoHide, "Hide the panel immediately after a device is selected"),
-            (_startInTray, "Start minimised to the notification area"),
-            (_startWithWindows, "Start CommPanel when Windows starts")
-        })
-        {
-            box.SetBounds(margin, y, width, 22);
-            box.Text = text;
-            StyleCheckBox(box);
-            Controls.Add(box);
-            y += 24;
+            var check = Toggle(text, new Rectangle(x, y, width, rowHeight));
+            y += rowStep;
+            return check;
         }
 
-        y += 10;
+        _showMeters = Row("Show level meters and volume faders");
+        _meterMic = Row("Meter the microphone while the panel is visible");
+        _linkComms = Row("Switch the communications device too");
+        _autoFallback = Row("Switch away from a device that goes offline");
+        _watchHeadset = Row("Detect a wireless headset being powered off");
+        _queryHeadset = Row("Ask the headset its state at launch");
+        _returnToHeadset = Row("Switch back when the headset powers on again");
+        _hotkey = Row("Global hotkey  Ctrl + Alt + C");
+        _autoHide = Row("Hide the panel after a device is selected");
+        _startInTray = Row("Start minimised to the notification area");
+        _startWithWindows = Row("Start CommPanel when Windows starts");
 
-        Controls.Add(SectionLabel("PANEL SIZE", margin, y, width));
-        y += 22;
+        y += Scaled(12);
 
-        _sizeFader.SetBounds(margin, y, 210, 24);
-        _sizeFader.BackColor = Background;
-        _sizeFader.ReadoutFont = new Font("Consolas", 8.25f, FontStyle.Bold);
+        y = Caption("PANEL SIZE", x, y, width);
+
+        int faderWidth = Scaled(200);
+        _sizeFader.Bounds = new Rectangle(x, y, faderWidth, Scaled(24));
+        _sizeFader.ReadoutFont = StencilFont;
         _sizeFader.ReadoutText = v => ((int)MathF.Round(ScaleFromSlider(v) * 100f)) + "%";
         _sizeFader.ValueChanged += v => PreviewScale?.Invoke(ScaleFromSlider(v));
         Controls.Add(_sizeFader);
 
-        Controls.Add(Hint("Scales the text and the whole panel with it, so nothing is clipped. "
-                          + "The window resizes as you drag.",
-                          margin + 222, y - 4, width - 222, 34));
-        y += 34;
+        // The preview applies to the panel behind this dialog, not to the dialog itself:
+        // a window that resized under the slider you were dragging would be unusable.
+        _hints.Add(("Scales the panel and its text together. The panel resizes as you drag.",
+                    new Rectangle(x + faderWidth + Scaled(12), y - Scaled(2),
+                                  width - faderWidth - Scaled(12), Scaled(34))));
+        y += Scaled(34);
 
-        Controls.Add(SectionLabel("LAMP BLOOM", margin, y, width));
-        y += 22;
+        y = Caption("LAMP BLOOM", x, y, width);
 
         // The fader and meter from the panel itself, so the preview is the real renderer
         // rather than an approximation of it.
-        _bloomFader.SetBounds(margin, y, 210, 24);
-        _bloomFader.BackColor = Background;
-        _bloomFader.ReadoutFont = new Font("Consolas", 8.25f, FontStyle.Bold);
+        _bloomFader.Bounds = new Rectangle(x, y, faderWidth, Scaled(24));
+        _bloomFader.ReadoutFont = StencilFont;
         _bloomFader.ValueChanged += value =>
         {
             PanelTheme.Bloom = Math.Clamp(value, 0f, 1f) * 2f;
@@ -210,72 +231,86 @@ internal sealed class SettingsForm : Form
         };
         Controls.Add(_bloomFader);
 
-        _bloomPreview.SetBounds(margin + 222, y, width - 222, 26);
-        _bloomPreview.BackColor = Background;
+        _bloomPreview.Bounds = new Rectangle(x + faderWidth + Scaled(12), y,
+                                             width - faderWidth - Scaled(12), Scaled(24));
         _bloomPreview.Caption = "DEMO";
-        _bloomPreview.CaptionFont = new Font("Consolas", 8.25f, FontStyle.Bold);
+        _bloomPreview.CaptionFont = StencilFont;
         Controls.Add(_bloomPreview);
-        y += 34;
+        y += Scaled(34);
 
-        Controls.Add(SectionLabel("VOICE LINK PORT", margin, y, width));
-        y += 22;
+        y = Caption("VOICE LINK PORT", x, y, width);
 
-        _voicePort.SetBounds(margin, y, 90, 24);
-        _voicePort.BorderStyle = BorderStyle.FixedSingle;
-        _voicePort.BackColor = Surface;
-        _voicePort.ForeColor = Ink;
-        _voicePort.Font = new Font("Consolas", 10f);
+        var portRecess = new Rectangle(x, y, Scaled(96), Scaled(30));
+        _recesses.Add(portRecess);
+        _voicePort.Bounds = Inside(portRecess);
+        StyleField(_voicePort);
         _voicePort.TextAlign = HorizontalAlignment.Center;
-        _voicePort.Minimum = 1024;
-        _voicePort.Maximum = 65535;
+        _voicePort.MaxLength = 5;
+        _voicePort.KeyPress += (_, e) =>
+        {
+            if (!char.IsControl(e.KeyChar) && !char.IsDigit(e.KeyChar)) e.Handled = true;
+        };
         Controls.Add(_voicePort);
 
-        Controls.Add(Hint("The UDP port a voice call listens on. Only change it if something "
-                          + "else already uses this one — your link code changes with it.",
-                          margin + 102, y - 4, width - 102, 34));
-        y += 34;
+        _hints.Add(("The UDP port a call listens on. Change it only if something else uses "
+                  + "this one — your link code changes with it.",
+                    new Rectangle(x + portRecess.Width + Scaled(12), y - Scaled(2),
+                                  width - portRecess.Width - Scaled(12), Scaled(34))));
+        y += portRecess.Height + Scaled(12);
 
-        var learn = DialogButton("Learn my headset…", margin, y, 150);
-        learn.Click += (_, _) => LearnHeadset();
-        Controls.Add(learn);
+        int keyHeight = Scaled(28);
+        int learnWidth = Scaled(168);
+        Key("LEARN MY HEADSET…", new Rectangle(x, y, learnWidth, keyHeight), (_, _) => LearnHeadset());
 
-        _headsetStatus.SetBounds(margin + 160, y, width - 160, 26);
-        _headsetStatus.ForeColor = InkDim;
-        _headsetStatus.Font = new Font("Consolas", 8.25f);
-        _headsetStatus.TextAlign = ContentAlignment.MiddleLeft;
-        Controls.Add(_headsetStatus);
-        y += 36;
+        _headsetStatusRect = new Rectangle(x, y + keyHeight + Scaled(6), width, Scaled(18));
 
-        var ok = DialogButton("Save", ClientSize.Width - margin - 170, y, 80);
-        ok.Click += (_, _) => Commit();
-        Controls.Add(ok);
-
-        var cancel = DialogButton("Cancel", ClientSize.Width - margin - 80, y, 80);
-        cancel.Click += (_, _) =>
-        {
-            PanelTheme.Bloom = _bloomOnEntry; // discard live bloom changes on cancel
-            DialogResult = DialogResult.Cancel;
-            Close();
-        };
-        Controls.Add(cancel);
-
-        AcceptButton = ok;
-        CancelButton = cancel;
-
-        ClientSize = new Size(ClientSize.Width, y + 34 + margin);
+        return _headsetStatusRect.Bottom;
     }
 
-    private void LoadValues(List<AudioDevice> outputs, List<AudioDevice> inputs)
+    /// <summary>Records a stencil caption for the chassis and returns the y below it.</summary>
+    private int Caption(string text, int x, int y, int width)
+    {
+        _captions.Add((text, new Rectangle(x, y, width, Scaled(18))));
+        return y + Scaled(22);
+    }
+
+    /// <summary>Records a block of explanatory text for the chassis and returns the y below it.</summary>
+    private int Hint(string text, int x, int y, int width, int logicalHeight)
+    {
+        _hints.Add((text, new Rectangle(x, y, width, Scaled(logicalHeight))));
+        return y + Scaled(logicalHeight) + Scaled(4);
+    }
+
+    protected override void DrawChassis(Graphics g)
+    {
+        float radius = Scaled(5);
+        foreach (var recess in _recesses) PanelTheme.DrawRecess(g, recess, radius);
+        foreach (var (text, bounds) in _captions) DrawCaption(g, text, bounds);
+        foreach (var (text, bounds) in _hints) DrawBody(g, text, bounds);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+
+        // Changes when a headset is learned, so it is painted rather than engraved.
+        TextRenderer.DrawText(e.Graphics, _headsetStatus, StencilFont, _headsetStatusRect,
+            Color.FromArgb(170, PanelTheme.TextSecondary),
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter |
+            TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
+    }
+
+    private void LoadValues()
     {
         foreach (string process in _settings.WatchedProcesses)
-            _watchList.Items.Add(process);
+            _watchList.Add(process);
 
-        foreach (var device in _allDevices)
+        for (int i = 0; i < _allDevices.Count; i++)
         {
-            string label = string.Format("{0}  —  {1}",
-                device.Flow == EDataFlow.Render ? "OUT" : "IN ", device.FullName);
-            int index = _deviceList.Items.Add(label);
-            _deviceList.SetItemChecked(index, !_settings.HiddenDeviceIds.Contains(device.Id));
+            var device = _allDevices[i];
+            _deviceList.Add(string.Format("{0}  {1}",
+                device.Flow == EDataFlow.Render ? "OUT" : "IN ", device.FullName));
+            _deviceList.SetLit(i, !_settings.HiddenDeviceIds.Contains(device.Id));
         }
 
         _watchEnabled.Checked = _settings.WatchProcesses;
@@ -286,7 +321,7 @@ internal sealed class SettingsForm : Form
         _sizeFader.Value = SliderFromScale(_settings.SafeFontScale);
         RefreshBloomPreview();
         _meterMic.Checked = _settings.MeterMicrophone;
-        _voicePort.Value = Math.Clamp(_settings.SafeVoicePort, 1024, 65535);
+        _voicePort.Text = _settings.SafeVoicePort.ToString();
         _watchHeadset.Checked = _settings.WatchHeadsetPower;
         _queryHeadset.Checked = _settings.QueryHeadsetStatus;
         _returnToHeadset.Checked = _settings.ReturnToHeadset;
@@ -299,13 +334,12 @@ internal sealed class SettingsForm : Form
 
     private void Commit()
     {
-        _settings.WatchedProcesses = _watchList.Items.Cast<object>()
-            .Select(item => item.ToString() ?? string.Empty)
+        _settings.WatchedProcesses = _watchList.Items
             .Where(text => text.Length > 0)
             .ToList();
 
         _settings.HiddenDeviceIds = _allDevices
-            .Where((_, index) => !_deviceList.GetItemChecked(index))
+            .Where((_, index) => !_deviceList.IsLit(index))
             .Select(device => device.Id)
             .ToList();
 
@@ -316,7 +350,13 @@ internal sealed class SettingsForm : Form
         _settings.BloomIntensity = _bloomFader.Value;
         _settings.FontScale = ScaleFromSlider(_sizeFader.Value);
         _settings.MeterMicrophone = _meterMic.Checked;
-        _settings.VoicePort = (int)_voicePort.Value;
+
+        // A typed port is clamped rather than rejected: an out-of-range value here is a slip,
+        // and refusing to save the whole dialog over it would be the wrong trade.
+        _settings.VoicePort = int.TryParse(_voicePort.Text, out int port) && port is >= 1024 and <= 65535
+            ? port
+            : 47821;
+
         _settings.WatchHeadsetPower = _watchHeadset.Checked;
         _settings.QueryHeadsetStatus = _queryHeadset.Checked;
         _settings.ReturnToHeadset = _returnToHeadset.Checked;
@@ -348,16 +388,16 @@ internal sealed class SettingsForm : Form
         if (slash >= 0) name = name[(slash + 1)..];
         if (!name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) name += ".exe";
 
-        foreach (object item in _watchList.Items)
+        foreach (string item in _watchList.Items)
         {
-            if (string.Equals(item.ToString(), name, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(item, name, StringComparison.OrdinalIgnoreCase))
             {
                 _newProcess.Clear();
                 return;
             }
         }
 
-        _watchList.Items.Add(name);
+        _watchList.Add(name);
         _newProcess.Clear();
     }
 
@@ -390,7 +430,7 @@ internal sealed class SettingsForm : Form
     /// </summary>
     private void LearnHeadset()
     {
-        using var wizard = new LearnHeadsetForm(_outputDevices);
+        using var wizard = new LearnHeadsetForm(_settings, _outputDevices);
         if (wizard.ShowDialog(this) != DialogResult.OK || wizard.Result is null) return;
 
         var learned = wizard.Result;
@@ -404,7 +444,6 @@ internal sealed class SettingsForm : Form
 
         // Learning a headset is a clear statement of intent that the feature should be on.
         _watchHeadset.Checked = true;
-        _watchHeadset.Invalidate();
 
         UpdateHeadsetStatus();
     }
@@ -427,14 +466,29 @@ internal sealed class SettingsForm : Form
                 .Distinct()
                 .ToList();
 
-            _headsetStatus.Text = matched.Count > 0
-                ? "detected: " + string.Join(", ", matched)
-                : "no supported base station detected — use Learn my headset";
+            _headsetStatus = matched.Count > 0
+                ? "DETECTED: " + string.Join(", ", matched).ToUpperInvariant()
+                : "NO SUPPORTED BASE STATION DETECTED — USE LEARN MY HEADSET";
         }
         catch
         {
-            _headsetStatus.Text = string.Empty;
+            _headsetStatus = string.Empty;
         }
+
+        Invalidate(_headsetStatusRect);
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        if (e.KeyCode == Keys.Escape)
+        {
+            PanelTheme.Bloom = _bloomOnEntry;
+            DialogResult = DialogResult.Cancel;
+            Close();
+            e.Handled = true;
+        }
+
+        base.OnKeyDown(e);
     }
 
     private static HeadsetProfile Clone(HeadsetProfile source) => new()
@@ -451,51 +505,4 @@ internal sealed class SettingsForm : Form
         PoweredOffValue = source.PoweredOffValue,
         IsBuiltIn = source.IsBuiltIn
     };
-
-    /// <summary>
-    /// The themed checkbox glyph is near-invisible against a dark form, so the box is drawn
-    /// flat with colours chosen here: a checked box fills green, which reads at a glance.
-    /// </summary>
-    private static void StyleCheckBox(ThemedCheckBox box)
-    {
-        box.FlatStyle = FlatStyle.Flat;
-        box.ForeColor = Ink;
-        box.BackColor = Background;
-        box.FlatAppearance.BorderColor = Color.FromArgb(0x6A, 0x64, 0x59);
-        box.FlatAppearance.CheckedBackColor = Color.FromArgb(0x3F, 0x6E, 0x42);
-        box.FlatAppearance.MouseOverBackColor = Color.FromArgb(0x3A, 0x37, 0x31);
-    }
-
-    private static Label SectionLabel(string text, int x, int y, int width) => new()
-    {
-        Text = text,
-        Bounds = new Rectangle(x, y, width, 20),
-        ForeColor = Color.FromArgb(0xC9, 0xBF, 0xA8),
-        Font = new Font("Consolas", 8.25f, FontStyle.Bold),
-        TextAlign = ContentAlignment.MiddleLeft
-    };
-
-    private static Label Hint(string text, int x, int y, int width, int height) => new()
-    {
-        Text = text,
-        Bounds = new Rectangle(x, y, width, height),
-        ForeColor = InkDim,
-        Font = new Font("Segoe UI", 8.25f)
-    };
-
-    private static Button DialogButton(string text, int x, int y, int width)
-    {
-        var button = new Button
-        {
-            Text = text,
-            Bounds = new Rectangle(x, y, width, 26),
-            FlatStyle = FlatStyle.Flat,
-            BackColor = Surface,
-            ForeColor = Ink,
-            UseVisualStyleBackColor = false
-        };
-        button.FlatAppearance.BorderColor = Color.FromArgb(0x55, 0x50, 0x48);
-        button.FlatAppearance.MouseOverBackColor = Color.FromArgb(0x45, 0x41, 0x39);
-        return button;
-    }
 }

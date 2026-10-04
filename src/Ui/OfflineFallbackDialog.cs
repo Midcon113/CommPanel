@@ -11,38 +11,36 @@ namespace CommPanel.Ui;
 /// one case where it would otherwise leave the user on a dead device with a working one
 /// sitting right there, so it asks instead of either guessing or staying silent.
 /// </summary>
-internal sealed class OfflineFallbackDialog : Form
+internal sealed class OfflineFallbackDialog : PanelDialog
 {
-    private static readonly Color Background = Color.FromArgb(0x26, 0x24, 0x21);
-    private static readonly Color Surface = Color.FromArgb(0x33, 0x30, 0x2B);
-    private static readonly Color Ink = Color.FromArgb(0xE6, 0xDF, 0xCD);
-    private static readonly Color InkDim = Color.FromArgb(0x9C, 0x93, 0x84);
+    private const int LogicalHeight = 330;
 
     private readonly List<AudioDevice> _candidates;
-    private readonly ComboBox _deviceBox = new();
-    private readonly ThemedCheckBox _unhide = new();
+    private readonly PlateList _deviceList = new();
+    private readonly PlateCheck _unhide;
 
-    public OfflineFallbackDialog(string lostDeviceName, bool isOutput, List<AudioDevice> candidates)
+    private Rectangle _headingRect;
+    private Rectangle _bodyRect;
+    private Rectangle _listCaption;
+    private Rectangle _listRecess;
+
+    private readonly string _lostDeviceName;
+    private readonly bool _isOutput;
+
+    public OfflineFallbackDialog(AppSettings settings, string lostDeviceName, bool isOutput,
+                                 List<AudioDevice> candidates)
+        : base(settings, "DEVICE OFFLINE", "NOTHING ON THE PANEL CAN TAKE OVER", LogicalHeight)
     {
         _candidates = candidates;
+        _lostDeviceName = lostDeviceName;
+        _isOutput = isOutput;
 
-        Text = "Device offline";
-        Icon = AppIcon.Load(32);
-        FormBorderStyle = FormBorderStyle.FixedDialog;
+        // The panel may well be in the tray with a game in front; this has to be seen, and it
+        // cannot assume there is a parent window on screen to centre on.
         StartPosition = FormStartPosition.CenterScreen;
-        MaximizeBox = false;
-        MinimizeBox = false;
-        ShowInTaskbar = false;
-        AutoScaleMode = AutoScaleMode.Dpi;
-        BackColor = Background;
-        ForeColor = Ink;
-        Font = new Font("Segoe UI", 9f);
-        ClientSize = new Size(470, 236);
-
-        // The panel may well be in the tray with a game in front; this has to be seen.
         TopMost = true;
 
-        BuildLayout(lostDeviceName, isOutput);
+        _unhide = BuildLayout();
     }
 
     /// <summary>The device the user chose, or null if they declined.</summary>
@@ -51,79 +49,89 @@ internal sealed class OfflineFallbackDialog : Form
     /// <summary>True when the user asked for the chosen device to be shown from now on.</summary>
     public bool ShouldUnhide => _unhide.Checked;
 
-    private void BuildLayout(string lostDeviceName, bool isOutput)
+    private PlateCheck BuildLayout()
     {
-        const int margin = 18;
-        int width = ClientSize.Width - margin * 2;
+        int margin = EdgeMargin;
+        int width = Scaled(470) - margin * 2;
+        int y = BodyTop;
 
-        string kind = isOutput ? "output" : "input";
+        _headingRect = new Rectangle(margin, y, width, Scaled(22));
+        y += Scaled(26);
 
-        var heading = new Label
-        {
-            Text = lostDeviceName + " has powered off",
-            Bounds = new Rectangle(margin, margin, width, 22),
-            ForeColor = Ink,
-            Font = new Font("Segoe UI Semibold", 11f)
-        };
-        Controls.Add(heading);
+        _bodyRect = new Rectangle(margin, y, width, Scaled(42));
+        y += Scaled(48);
 
-        var body = new Label
-        {
-            Text = "No " + kind + " device on your panel can take over, so CommPanel has left it "
-                 + "selected. These devices are hidden, but one of them could be used:",
-            Bounds = new Rectangle(margin, margin + 28, width, 52),
-            ForeColor = InkDim,
-            Font = new Font("Segoe UI", 8.5f)
-        };
-        Controls.Add(body);
+        _listCaption = new Rectangle(margin, y, width, Scaled(16));
+        y += Scaled(20);
 
-        _deviceBox.SetBounds(margin, margin + 86, width, 24);
-        _deviceBox.DropDownStyle = ComboBoxStyle.DropDownList;
-        _deviceBox.BackColor = Surface;
-        _deviceBox.ForeColor = Ink;
-        _deviceBox.FlatStyle = FlatStyle.Flat;
-        foreach (var device in _candidates) _deviceBox.Items.Add(device.FullName);
-        if (_deviceBox.Items.Count > 0) _deviceBox.SelectedIndex = 0;
-        Controls.Add(_deviceBox);
+        _listRecess = new Rectangle(margin, y, width, Scaled(84));
+        _deviceList.Bounds = Inside(_listRecess);
+        StyleList(_deviceList);
+        foreach (var device in _candidates) _deviceList.Add(device.FullName);
+        if (_deviceList.Items.Count > 0) _deviceList.SelectedIndex = 0;
+        Controls.Add(_deviceList);
+        y += _listRecess.Height + Scaled(12);
 
-        _unhide.SetBounds(margin, margin + 120, width, 22);
-        _unhide.Text = "Also show this device on the panel from now on";
-        _unhide.ForeColor = Ink;
-        _unhide.BackColor = Background;
-        _unhide.FlatAppearance.BorderColor = Color.FromArgb(0x6A, 0x64, 0x59);
-        Controls.Add(_unhide);
+        var unhide = Toggle("Also show this device on the panel from now on",
+                            new Rectangle(margin, y, width, Scaled(20)));
+        y += Scaled(20) + Scaled(14);
 
-        var switchButton = DialogButton("Switch to it", ClientSize.Width - margin - 210, ClientSize.Height - margin - 30, 110);
-        switchButton.Click += (_, _) =>
-        {
-            int index = _deviceBox.SelectedIndex;
-            if (index >= 0 && index < _candidates.Count) Chosen = _candidates[index];
-            DialogResult = DialogResult.OK;
-            Close();
-        };
-        Controls.Add(switchButton);
+        int keyHeight = Scaled(30);
+        int switchWidth = Scaled(124);
+        int stayWidth = Scaled(96);
 
-        var stay = DialogButton("Stay put", ClientSize.Width - margin - 92, ClientSize.Height - margin - 30, 92);
-        stay.Click += (_, _) => { DialogResult = DialogResult.Cancel; Close(); };
-        Controls.Add(stay);
+        var switchKey = Key("SWITCH TO IT",
+            new Rectangle(margin + width - switchWidth, y, switchWidth, keyHeight),
+            (_, _) =>
+            {
+                int index = _deviceList.SelectedIndex;
+                if (index >= 0 && index < _candidates.Count) Chosen = _candidates[index];
+                DialogResult = DialogResult.OK;
+                Close();
+            });
+        switchKey.ShowLamp = true;
+        switchKey.IsOn = true;
+        switchKey.LampColor = PanelTheme.LampGreen;
 
-        AcceptButton = switchButton;
-        CancelButton = stay;
+        Key("STAY PUT",
+            new Rectangle(switchKey.Left - Scaled(8) - stayWidth, y, stayWidth, keyHeight),
+            (_, _) => { DialogResult = DialogResult.Cancel; Close(); });
+
+        y += keyHeight + margin;
+
+        ClientSize = new Size(Scaled(470), y);
+        PlaceHeader();
+        RebuildChassis();
+
+        return unhide;
     }
 
-    private static Button DialogButton(string text, int x, int y, int width)
+    protected override void DrawChassis(Graphics g)
     {
-        var button = new Button
+        PanelTheme.DrawRecess(g, _listRecess, Scaled(5));
+
+        PanelTheme.DrawEngraved(g, _lostDeviceName + " has powered off", LabelFont, _headingRect,
+            PanelTheme.TextPrimary,
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine |
+            TextFormatFlags.EndEllipsis);
+
+        string kind = _isOutput ? "output" : "input";
+
+        DrawBody(g, "No " + kind + " device on your panel can take over, so CommPanel has left it "
+                  + "selected. These devices are hidden, but one of them could be used:", _bodyRect);
+
+        DrawCaption(g, "HIDDEN DEVICES", _listCaption);
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        if (e.KeyCode == Keys.Escape)
         {
-            Text = text,
-            Bounds = new Rectangle(x, y, width, 30),
-            FlatStyle = FlatStyle.Flat,
-            BackColor = Surface,
-            ForeColor = Ink,
-            UseVisualStyleBackColor = false
-        };
-        button.FlatAppearance.BorderColor = Color.FromArgb(0x55, 0x50, 0x48);
-        button.FlatAppearance.MouseOverBackColor = Color.FromArgb(0x45, 0x41, 0x39);
-        return button;
+            DialogResult = DialogResult.Cancel;
+            Close();
+            e.Handled = true;
+        }
+
+        base.OnKeyDown(e);
     }
 }
