@@ -207,7 +207,12 @@ internal sealed class AudioEndpointService : IDisposable
         var enumerator = _enumerator;
         if (enumerator is null) return null;
 
-        try { return Voice.VoiceCapture.Open(enumerator, deviceId, onFrame, out error); }
+        try
+        {
+            var capture = Voice.VoiceCapture.Open(enumerator, deviceId, onFrame, out error);
+            if (capture is null) Core.Log.Write("voice", "microphone would not open: " + (error ?? "no reason given"));
+            return capture;
+        }
         catch (Exception ex)
         {
             error = ex.Message;
@@ -222,7 +227,12 @@ internal sealed class AudioEndpointService : IDisposable
         var enumerator = _enumerator;
         if (enumerator is null) return null;
 
-        try { return Voice.VoiceRender.Open(enumerator, deviceId, frameSource, out error); }
+        try
+        {
+            var render = Voice.VoiceRender.Open(enumerator, deviceId, frameSource, out error);
+            if (render is null) Core.Log.Write("voice", "playback would not open: " + (error ?? "no reason given"));
+            return render;
+        }
         catch (Exception ex)
         {
             error = ex.Message;

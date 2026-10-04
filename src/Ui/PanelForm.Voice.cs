@@ -1,3 +1,4 @@
+using CommPanel.Core;
 using CommPanel.Voice;
 
 namespace CommPanel.Ui;
@@ -38,6 +39,11 @@ internal sealed partial class PanelForm
     private VoiceSession? _voice;
     private VoiceLinkState _voiceStateShown = VoiceLinkState.Idle;
     private string? _voiceCodeShown;
+
+    // Notification pacing. A call over a real link has the odd hiccup, and a stack of Windows
+    // warnings about a call that is working is worse than saying nothing at all.
+    private DateTime _voiceBalloonAt = DateTime.MinValue;
+    private bool _voiceFaultAnnounced;
 
     private Rectangle _voicePlate;
     private Rectangle _voiceHeader;
@@ -235,11 +241,15 @@ internal sealed partial class PanelForm
         {
             _voice = new VoiceSession(_audio);
             _voice.HealthChanged += OnVoiceHealthChanged;
+            _voice.StateChanged += OnVoiceStateChanged;
+
+            Log.Write("voice", "opening the voice socket on port " + _settings.SafeVoicePort);
 
             if (!_voice.Start(_settings.SafeVoicePort, null, out string? error))
             {
                 _voice.Dispose();
                 _voice = null;
+                Log.Write("voice", "could not open the socket: " + (error ?? "unknown"));
                 SetStatus("VOICE PORT UNAVAILABLE — " + (error ?? "unknown").ToUpperInvariant(),
                           PanelTheme.LampAmber);
                 return;
@@ -271,11 +281,27 @@ internal sealed partial class PanelForm
         StartVoice();
     }
 
+    /// <summary>
+    /// Closes the voice section. A call in progress is deliberately left running: this key
+    /// collapses the strip, and hanging up is what HANG UP is for. The session is released
+    /// when the call ends - see <see cref="OnVoiceStateChanged"/>.
+    /// </summary>
     private void StopVoice()
     {
         _voiceTimer.Stop();
 
-        if (_voice is not null) _voice.HealthChanged -= OnVoiceHealthChanged;
+        if (_voice?.IsInCall == true)
+        {
+            SetStatus("VOICE PANEL CLOSED — THE CALL IS STILL RUNNING", PanelTheme.LampBlue);
+            return;
+        }
+
+        if (_voice is not null)
+        {
+            _voice.HealthChanged -= OnVoiceHealthChanged;
+            _voice.StateChanged -= OnVoiceStateChanged;
+        }
+
         _voice?.Dispose();
         _voice = null;
         _voiceSend.Reset();
@@ -283,6 +309,29 @@ internal sealed partial class PanelForm
         _voiceCodeShown = null;
         _voiceStateShown = VoiceLinkState.Idle;
         UpdateVoiceUi();
+    }
+
+    /// <summary>
+    /// Releases the session once a call ends that was outliving a collapsed voice strip.
+    /// Arrives on the link's thread, so it hops to the UI thread first.
+    /// </summary>
+    private void OnVoiceStateChanged(VoiceLinkState state)
+    {
+        Log.Write("voice", "call state: " + state);
+
+        if (state != VoiceLinkState.Idle || _settings.VoiceEnabled) return;
+        if (IsDisposed || !IsHandleCreated) return;
+
+        try
+        {
+            BeginInvoke(new Action(() =>
+            {
+                if (_settings.VoiceEnabled || _voice?.IsInCall == true) return;
+                StopVoice();
+            }));
+        }
+        catch (ObjectDisposedException) { }
+        catch (InvalidOperationException) { }
     }
 
     /// <summary>Starts or stops the voice strip's repaint timer with the window's visibility.</summary>
@@ -415,6 +464,8 @@ internal sealed partial class PanelForm
     /// </summary>
     private void OnVoiceHealthChanged(VoiceHealthCode code, string message)
     {
+        Log.Write("health", code + " - " + message);
+
         if (IsDisposed || !IsHandleCreated) return;
 
         try
@@ -423,12 +474,25 @@ internal sealed partial class PanelForm
             {
                 UpdateVoiceHealthLine();
 
-                if (code is VoiceHealthCode.Idle or VoiceHealthCode.Healthy) return;
+                if (code is VoiceHealthCode.Idle or VoiceHealthCode.Healthy)
+                {
+                    // Recovered: the next genuine fault is worth announcing again.
+                    _voiceFaultAnnounced = false;
+                    return;
+                }
 
                 SetStatus(message, PanelTheme.LampAmber);
 
-                if (!Visible && _tray is not null)
-                    _tray.ShowBalloonTip(6000, "CommPanel voice", message, ToolTipIcon.Warning);
+                // The panel shows every step; Windows hears about a fault once per episode,
+                // and never about a repair in progress.
+                if (code == VoiceHealthCode.Repairing) return;
+                if (Visible || _tray is null) return;
+                if (_voiceFaultAnnounced) return;
+                if (DateTime.UtcNow - _voiceBalloonAt < TimeSpan.FromMinutes(2)) return;
+
+                _voiceFaultAnnounced = true;
+                _voiceBalloonAt = DateTime.UtcNow;
+                _tray.ShowBalloonTip(6000, "CommPanel voice", message, ToolTipIcon.Warning);
             }));
         }
         catch (ObjectDisposedException) { }
@@ -519,7 +583,12 @@ internal sealed partial class PanelForm
         _voiceTimer.Stop();
         _voiceTimer.Dispose();
 
-        if (_voice is not null) _voice.HealthChanged -= OnVoiceHealthChanged;
+        if (_voice is not null)
+        {
+            _voice.HealthChanged -= OnVoiceHealthChanged;
+            _voice.StateChanged -= OnVoiceStateChanged;
+        }
+
         _voice?.Dispose();
         _voice = null;
     }

@@ -486,8 +486,31 @@ identical on a meter, so silence alone is never treated as a problem — only fa
 the device itself, like Windows having the microphone muted, or the capture stream going
 dead. Half a minute of nobody talking stays silent on the panel.
 
-If a fault turns up while the panel is in the tray, a notification balloon says so, because
-that is exactly when nobody is looking at the panel.
+If a fault turns up while the panel is in the tray, a Windows notification says so once -
+that is exactly when nobody is looking at the panel. Once per fault, and at most one every
+couple of minutes: a call over a real link has the odd hiccup, and a stack of warnings about
+a call that is working is worse than saying nothing. The panel itself shows every step, and
+the log keeps all of them.
+
+### The log
+
+CommPanel keeps a small log beside the executable, `CommPanel.log`. **Tray icon → Open the
+log** opens it. Everything the panel announces on its status line goes in, along with the
+device, headset and call events behind it:
+
+```
+2026-10-04 14:49:44.326  voice     opening the voice socket on port 47821
+2026-10-04 14:49:44.407  panel     ready - 6 outputs, 10 inputs, headsetWatch=True voice=True
+2026-10-04 14:51:02.118  headset   Arctis Nova Pro Wireless reported powered ON
+2026-10-04 14:51:02.210  status    ARCTIS NOVA PRO WIRELESS BACK ON — SELECTED
+```
+
+It is written only when something happens, never on a timer, so an idle CommPanel writes
+nothing at all. It rolls at 256 KB and keeps one previous file, so it cannot grow without
+limit. If the install folder is read-only it falls back to `%APPDATA%\CommPanel`.
+
+This exists because of a question that could not be answered: a voice call that worked but
+showed warnings, with nothing written down to say what they were.
 
 ## Performance
 

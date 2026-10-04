@@ -220,6 +220,11 @@ internal sealed partial class PanelForm : Form
         // the point, and CommPanel normally sits in the tray. No audio device is touched
         // until a call is actually placed.
         if (_settings.VoiceEnabled) StartVoice();
+
+        Log.Write("panel", string.Format(
+            "ready - {0} outputs, {1} inputs, headsetWatch={2} voice={3} trayMeter={4}",
+            _outputs.Count, _inputs.Count, _settings.WatchHeadsetPower,
+            _settings.VoiceEnabled, _settings.TrayMeter));
     }
 
     protected override CreateParams CreateParams
@@ -552,6 +557,13 @@ internal sealed partial class PanelForm : Form
         menu.Items.Add(startWithWindows);
 
         menu.Items.Add(new ToolStripMenuItem("Settings…", null, (_, _) => ShowSettings()));
+
+        var log = new ToolStripMenuItem("Open the log", null, (_, _) => OpenLog())
+        {
+            Enabled = Log.Path is not null
+        };
+        menu.Items.Add(log);
+
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("Exit", null, (_, _) => ExitApplication()));
     }
@@ -576,6 +588,33 @@ internal sealed partial class PanelForm : Form
             }
         }
         menu.Items.Add(root);
+    }
+
+    /// <summary>
+    /// Opens the log in whatever handles a text file. Worth a menu entry rather than a path
+    /// in the documentation: when something has gone wrong is exactly when nobody wants to
+    /// go hunting for a file.
+    /// </summary>
+    private void OpenLog()
+    {
+        string? path = Log.Path;
+        if (path is null || !File.Exists(path))
+        {
+            ShowError("There is no log file yet.");
+            return;
+        }
+
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path)
+            {
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            ShowError("Could not open the log: " + ex.Message);
+        }
     }
 
     // ---------------------------------------------------------------- layout
@@ -1102,6 +1141,8 @@ internal sealed partial class PanelForm : Form
     /// </summary>
     private void OnHeadsetPoweredOff(string adapterName) => MarshalToUi(() =>
     {
+        Log.Write("headset", adapterName + " reported powered OFF");
+
         // Mark the device offline whether or not it was the one in use. A headset that times
         // out while unselected is exactly the case that used to go unnoticed: the panel went
         // on offering it, and picking it produced silence.
@@ -1120,6 +1161,8 @@ internal sealed partial class PanelForm : Form
     /// </summary>
     private void OnHeadsetPoweredOn(string adapterName) => MarshalToUi(() =>
     {
+        Log.Write("headset", adapterName + " reported powered ON");
+
         string? returnOutput = _returnOutputId;
         string? returnInput = _returnInputId;
         _returnOutputId = null;
@@ -1544,6 +1587,10 @@ internal sealed partial class PanelForm : Form
 
     private void SetStatus(string text, Color color)
     {
+        // Everything the panel announces is logged, so a session can be read back afterwards
+        // instead of remembered. This is the line the user actually sees.
+        if (!string.Equals(text, _statusText, StringComparison.Ordinal)) Log.Write("status", text);
+
         _statusText = text;
         _statusColor = color;
         Invalidate(_statusRect);
@@ -1640,6 +1687,10 @@ internal sealed partial class PanelForm : Form
             ? _inputCapture.ReadPeak()
             : _inputControls?.ReadPeak() ?? 0f;
 
+        // Re-checked every tick rather than only when metering starts: a call beginning or
+        // ending mid-session changes whether the panel should hold the microphone itself.
+        EnsureCaptureMeter();
+
         if (_outputMeter.Feed(_outputControls?.ReadPeak() ?? 0f)) _outputMeter.Invalidate();
         if (_inputMeter.Feed(inputPeak)) _inputMeter.Invalidate();
 
@@ -1707,9 +1758,16 @@ internal sealed partial class PanelForm : Form
     {
         string? inputId = _inputControls?.DeviceId;
 
+        // A call already holds the microphone open, and an endpoint meter reads a level
+        // whenever something is capturing - so during a call the panel can read the level
+        // without opening the device a second time. Opening it twice gained nothing and
+        // produced a refusal that was reported as a privacy problem.
+        bool inCall = _voice?.IsInCall == true;
+
         bool wanted = _settings.ShowMeters &&
                       _settings.MeterMicrophone &&
                       _meterTimer.Enabled &&
+                      !inCall &&
                       inputId is not null;
 
         if (!wanted)
@@ -1728,6 +1786,7 @@ internal sealed partial class PanelForm : Form
             !string.Equals(_captureMeterErrorFor, inputId, StringComparison.OrdinalIgnoreCase))
         {
             _captureMeterErrorFor = inputId;
+            Log.Write("meter", "could not open the microphone for metering: " + error);
             SetStatus("MIC METER — " + error.ToUpperInvariant(), PanelTheme.LampAmber);
         }
         else if (_inputCapture is not null)

@@ -34,7 +34,10 @@ internal static class Program
         try { Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.BelowNormal; }
         catch { /* not fatal */ }
 
+        Log.Start(typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown");
+
         var settings = AppSettings.Load();
+        Log.Write("settings", "loaded from " + (settings.FilePath ?? "defaults"));
         Ui.PanelTheme.Bloom = settings.BloomMultiplier;
         StartupRegistration.RefreshPathIfRegistered();
 

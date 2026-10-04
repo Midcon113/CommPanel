@@ -458,8 +458,12 @@ internal sealed class VoiceSession : IDisposable, IVoiceRepair
             if (_link is null) return RepairOutcome.NothingToDo;
 
             _render?.Dispose();
-            _render = _audio.OpenVoiceRender(console, _link.TakeVoice, out _);
-            if (_render is null) return RepairOutcome.NothingToDo;
+            _render = _audio.OpenVoiceRender(console, _link.TakeVoice, out string? moveError);
+            if (_render is null)
+            {
+                Core.Log.Write("repair", "could not move the call to the default output: " + (moveError ?? "unknown"));
+                return RepairOutcome.NothingToDo;
+            }
 
             _renderOverrideId = console;
         }
@@ -480,7 +484,8 @@ internal sealed class VoiceSession : IDisposable, IVoiceRepair
             if (outputId is null) return RepairOutcome.NothingToDo;
 
             _render?.Dispose();
-            _render = _audio.OpenVoiceRender(outputId, _link.TakeVoice, out _);
+            _render = _audio.OpenVoiceRender(outputId, _link.TakeVoice, out string? renderError);
+            if (_render is null) Core.Log.Write("repair", "reopening playback failed: " + (renderError ?? "unknown"));
         }
 
         what = "REOPENED PLAYBACK";
@@ -500,8 +505,9 @@ internal sealed class VoiceSession : IDisposable, IVoiceRepair
             if (inputId is null) return RepairOutcome.NothingToDo;
 
             _capture?.Dispose();
-            _capture = _audio.OpenVoiceCapture(inputId, _link.SendVoice, out _);
-            if (_capture is not null) _capture.Muted = _muted;
+            _capture = _audio.OpenVoiceCapture(inputId, _link.SendVoice, out string? captureError);
+            if (_capture is null) Core.Log.Write("repair", "reopening the microphone failed: " + (captureError ?? "unknown"));
+            else _capture.Muted = _muted;
             _lastCaptureFrames = 0;
         }
 

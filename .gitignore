@@ -11,6 +11,10 @@ release/
 # which are specific to one machine and should never be published.
 CommPanel.settings.json
 
+# Log files: machine-specific and regenerated on every run.
+*.log
+*.log.old
+
 # Editor / OS noise
 .vs/
 *.user
