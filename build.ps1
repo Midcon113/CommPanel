@@ -52,7 +52,8 @@ if ($running) {
 }
 
 # Settings live beside the executable to keep the app portable, which puts them inside the
-# folder being rebuilt. Carry them across so a rebuild never costs the user their setup.
+# folder being rebuilt. The log lives there too, and a rebuild that threw it away would
+# destroy the record of whatever the rebuild was meant to fix. Carry both across.
 $settingsName = 'CommPanel.settings.json'
 $settingsPath = Join-Path $OutputPath $settingsName
 $savedSettings = $null
@@ -60,6 +61,17 @@ if (Test-Path $settingsPath) {
     $savedSettings = Get-Content $settingsPath -Raw
     Write-Host "  preserving existing $settingsName"
 }
+
+$logNames = @('CommPanel.log', 'CommPanel.log.old')
+$savedLogs = @{}
+foreach ($logName in $logNames) {
+    $logPath = Join-Path $OutputPath $logName
+    if (Test-Path $logPath) {
+        $savedLogs[$logName] = [System.IO.File]::ReadAllBytes($logPath)
+        Write-Host "  preserving existing $logName"
+    }
+}
+
 
 if (Test-Path $OutputPath) {
     Remove-Item $OutputPath -Recurse -Force
@@ -90,6 +102,10 @@ if ($LASTEXITCODE -ne 0) {
 
 if ($savedSettings) {
     Set-Content -Path $settingsPath -Value $savedSettings -NoNewline
+}
+
+foreach ($logName in $savedLogs.Keys) {
+    [System.IO.File]::WriteAllBytes((Join-Path $OutputPath $logName), $savedLogs[$logName])
 }
 
 # The published folder is the deliverable, so the readme travels with it.
