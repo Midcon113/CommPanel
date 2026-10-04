@@ -1131,19 +1131,49 @@ internal sealed partial class PanelForm : Form
         // Clears the offline mark on the headset's devices.
         RefreshWithoutFallback();
 
-        if (!_settings.ReturnToHeadset)
+        bool selected = false;
+
+        if (_settings.ReturnToHeadset)
         {
-            SetStatus(adapterName.ToUpperInvariant() + " BACK ON", PanelTheme.LampGreen);
-            return;
+            // Undo the switch CommPanel made when the headset went off, if it made one.
+            selected = ReturnTo(EDataFlow.Render, _outputs, returnOutput);
+            selected |= ReturnTo(EDataFlow.Capture, _inputs, returnInput);
+
+            // There is often nothing to undo: CommPanel starting up while the headset was
+            // already off never switched away from it, so it has no earlier choice to
+            // restore. Switching a headset on is a clear enough statement of intent on its
+            // own, and the setting says this is what it does.
+            if (!selected)
+            {
+                selected = SelectAdapter(EDataFlow.Render, _outputs, adapterName);
+                selected |= SelectAdapter(EDataFlow.Capture, _inputs, adapterName);
+            }
         }
 
-        // The endpoint list is unchanged as far as Windows is concerned, so no rescan is
-        // needed - the headset's endpoints were never removed in the first place.
-        bool restored = ReturnTo(EDataFlow.Render, _outputs, returnOutput);
-        restored |= ReturnTo(EDataFlow.Capture, _inputs, returnInput);
-
-        if (restored) SetStatus(adapterName.ToUpperInvariant() + " BACK ON — RESTORED", PanelTheme.LampGreen);
+        // Always say something. Silence here is indistinguishable from not having noticed,
+        // which is exactly how this looked from the outside.
+        SetStatus(adapterName.ToUpperInvariant() + (selected ? " BACK ON — SELECTED" : " BACK ON"),
+                  PanelTheme.LampGreen);
     });
+
+    /// <summary>
+    /// Selects the devices belonging to a headset by its adapter name. Used when the headset
+    /// comes back on and there is no earlier choice to restore.
+    /// </summary>
+    private bool SelectAdapter(EDataFlow flow, List<AudioDevice> available, string adapterName)
+    {
+        var target = available.FirstOrDefault(d =>
+            !d.IsOffline &&
+            !string.IsNullOrEmpty(d.Adapter) &&
+            d.Adapter.Contains(adapterName, StringComparison.OrdinalIgnoreCase));
+
+        if (target is null || target.IsDefault) return false;
+
+        if (!_audio.SetDefault(target.Id, flow, _settings.LinkCommunications, out _)) return false;
+
+        RefreshWithoutFallback();
+        return true;
+    }
 
     /// <summary>
     /// Switches away from every endpoint belonging to <paramref name="adapterName"/>, and
