@@ -88,6 +88,7 @@ internal sealed class HeadsetWatcher : IDisposable
                 if (entry.Reader.IsAlive) return false;
                 entry.Reader.Dispose();
                 entry.QueryReader?.Dispose();
+                entry.Dispose();
                 return true;
             });
 
@@ -181,9 +182,31 @@ internal sealed class HeadsetWatcher : IDisposable
     }
 
     /// <summary>One open interface, its profile, and the last state it reported.</summary>
-    private sealed class Entry
+    private sealed class Entry : IDisposable
     {
-        public Entry(HeadsetProfile profile) => Profile = profile;
+        /// <summary>
+        /// How long a new state has to hold before it is believed.
+        ///
+        /// Measured on a real headset: switching it on produced ON, then OFF 160 ms later,
+        /// then ON again 800 ms after that, before settling. Acting on each of those changed
+        /// the Windows default device three times in three seconds. A second of quiet
+        /// collapses the whole bounce into one event, and a second's delay is nothing against
+        /// a state Windows never reports at all.
+        /// </summary>
+        private static readonly TimeSpan Settle = TimeSpan.FromMilliseconds(1000);
+
+        private readonly object _gate = new();
+        private readonly System.Threading.Timer _confirm;
+
+        private bool? _pending;
+        private bool _disposed;
+
+        public Entry(HeadsetProfile profile)
+        {
+            Profile = profile;
+            _confirm = new System.Threading.Timer(_ => Confirm(), null,
+                                                 Timeout.Infinite, Timeout.Infinite);
+        }
 
         public HeadsetProfile Profile { get; }
         public HidReportReader Reader { get; set; } = null!;
@@ -194,37 +217,74 @@ internal sealed class HeadsetWatcher : IDisposable
         public string? QueryPath { get; set; }
         public int QueryLength { get; set; }
 
-        /// <summary>Handles the reply to a status query, which uses its own report format.</summary>
-        public void HandleQueryReply(HidDeviceInfo device, byte[] buffer, int length)
-        {
-            bool? state = Profile.ReadQueryState(buffer, length);
-            if (state is null) return;
-
-            if (LastKnownState == state) return;
-
-            bool firstReading = LastKnownState is null;
-            StateBox = state.Value;
-
-            Report?.Invoke(Profile, state.Value, firstReading);
-        }
-
-        /// <summary>Null until a report has actually been seen for this device.</summary>
+        /// <summary>Null until a state has actually been confirmed for this device.</summary>
         public volatile object? StateBox;
 
         public bool? LastKnownState => StateBox as bool?;
 
-        public void Handle(HidDeviceInfo device, byte[] buffer, int length)
+        /// <summary>Handles the reply to a status query, which uses its own report format.</summary>
+        public void HandleQueryReply(HidDeviceInfo device, byte[] buffer, int length) =>
+            Observe(Profile.ReadQueryState(buffer, length));
+
+        public void Handle(HidDeviceInfo device, byte[] buffer, int length) =>
+            Observe(Profile.ReadState(buffer, length));
+
+        /// <summary>
+        /// Takes one raw reading. These base stations repeat their status constantly, so a
+        /// reading that matches what we already believe is thrown away; anything else starts
+        /// the clock, and only survives if nothing contradicts it.
+        /// </summary>
+        private void Observe(bool? state)
         {
-            bool? state = Profile.ReadState(buffer, length);
             if (state is null) return;
 
-            // These base stations repeat their status; only transitions are worth reporting.
-            if (LastKnownState == state) return;
+            lock (_gate)
+            {
+                if (_disposed) return;
 
-            bool firstReading = LastKnownState is null;
-            StateBox = state.Value;
+                if (LastKnownState == state)
+                {
+                    // Back to what we already reported: whatever was pending was a blip.
+                    _pending = null;
+                    _confirm.Change(Timeout.Infinite, Timeout.Infinite);
+                    return;
+                }
 
-            Report?.Invoke(Profile, state.Value, firstReading);
+                if (_pending == state) return; // already waiting on this one
+
+                _pending = state;
+                _confirm.Change(Settle, Timeout.InfiniteTimeSpan);
+            }
+        }
+
+        private void Confirm()
+        {
+            bool value;
+            bool firstReading;
+
+            lock (_gate)
+            {
+                if (_disposed || _pending is null) return;
+                if (LastKnownState == _pending) { _pending = null; return; }
+
+                value = _pending.Value;
+                firstReading = LastKnownState is null;
+                StateBox = value;
+                _pending = null;
+            }
+
+            Report?.Invoke(Profile, value, firstReading);
+        }
+
+        public void Dispose()
+        {
+            lock (_gate)
+            {
+                if (_disposed) return;
+                _disposed = true;
+            }
+
+            _confirm.Dispose();
         }
     }
 }
