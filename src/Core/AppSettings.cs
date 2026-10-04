@@ -80,6 +80,12 @@ internal sealed class AppSettings
     /// <summary>The last code dialled, offered again so a repeat call needs no reading out.</summary>
     public string? LastVoicePeer { get; set; }
 
+    /// <summary>
+    /// Turns the notification-area icon into a miniature output meter. Off by default: it is
+    /// the one thing CommPanel does that costs anything while it is hidden.
+    /// </summary>
+    public bool TrayMeter { get; set; }
+
     /// <summary>Whether the per-application mixer section is expanded.</summary>
     public bool MixerExpanded { get; set; }
 

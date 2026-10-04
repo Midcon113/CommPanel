@@ -110,6 +110,17 @@ internal sealed partial class PanelForm : Form
     private Font _stencilFont = PanelTheme.StencilFont(1f);
 
     private NotifyIcon? _tray;
+    private TrayMeter? _trayMeter;
+
+    /// <summary>The plain tray icon, owned here so swapping to the meter and back leaks nothing.</summary>
+    private Icon? _trayIcon;
+
+    /// <summary>
+    /// Drives the tray meter. Separate from the panel's own metering timer because this one
+    /// runs while the panel is hidden, which is the whole point of it, and the panel's stops
+    /// the moment the window goes away.
+    /// </summary>
+    private readonly System.Windows.Forms.Timer _trayTimer = new();
     private Bitmap? _chassis;
 
     private Rectangle _outputBank;
@@ -433,9 +444,11 @@ internal sealed partial class PanelForm : Form
 
     private void BuildTrayIcon()
     {
+        _trayIcon = AppIcon.LoadTray();
+
         _tray = new NotifyIcon
         {
-            Icon = AppIcon.LoadTray() ?? SystemIcons.Application,
+            Icon = _trayIcon ?? SystemIcons.Application,
             Text = "CommPanel",
             Visible = true
         };
@@ -447,6 +460,56 @@ internal sealed partial class PanelForm : Form
         {
             if (e.Button == MouseButtons.Left) TogglePanel();
         };
+
+        // 10 Hz rather than the panel's 30: a tray icon a sixth of an inch across does not
+        // repay a faster refresh, and this one keeps running behind a game.
+        _trayTimer.Interval = 100;
+        _trayTimer.Tick += OnTrayMeterTick;
+
+        ApplyTrayMeterSetting();
+    }
+
+    /// <summary>Starts or stops the tray meter to match the setting.</summary>
+    private void ApplyTrayMeterSetting()
+    {
+        if (_tray is null) return;
+
+        if (_settings.TrayMeter)
+        {
+            _trayMeter ??= new TrayMeter();
+            _trayMeter.Reset();
+            if (!_trayTimer.Enabled) _trayTimer.Start();
+            return;
+        }
+
+        _trayTimer.Stop();
+
+        // Restore the real icon before releasing the meter's, so the tray never points at a
+        // disposed icon even for an instant.
+        _trayIcon ??= AppIcon.LoadTray();
+        _tray.Icon = _trayIcon ?? SystemIcons.Application;
+
+        _trayMeter?.Dispose();
+        _trayMeter = null;
+    }
+
+    /// <summary>
+    /// Reads the output level and repaints the tray icon when it has actually moved.
+    ///
+    /// Most ticks do nothing but one COM call: the meter quantises the level into seven
+    /// steps and returns null while the step is unchanged, so an idle machine never touches
+    /// the icon at all.
+    /// </summary>
+    private void OnTrayMeterTick(object? sender, EventArgs e)
+    {
+        var tray = _tray;
+        var meter = _trayMeter;
+        if (tray is null || meter is null) return;
+
+        var icon = meter.IconFor(_outputControls?.ReadPeak() ?? 0f);
+        if (icon is null) return;
+
+        tray.Icon = icon;
     }
 
     /// <summary>
@@ -1807,6 +1870,7 @@ internal sealed partial class PanelForm : Form
             PanelTheme.Bloom = _settings.BloomMultiplier;
             ApplyScale();
             if (_settings.ShowMeters) StartMetering(); else StopMetering();
+            ApplyTrayMeterSetting();
             SyncVoiceWithSettings();
             SetStatus("SETTINGS SAVED", PanelTheme.LampGreen);
         }
@@ -1939,13 +2003,22 @@ internal sealed partial class PanelForm : Form
             _headsetWatcher.Dispose();
             _refreshDebounce.Dispose();
 
+            _trayTimer.Stop();
+            _trayTimer.Dispose();
+
             if (_tray is not null)
             {
                 _tray.Visible = false;
+                _tray.Icon = null;
                 _tray.ContextMenuStrip?.Dispose();
                 _tray.Dispose();
                 _tray = null;
             }
+
+            _trayMeter?.Dispose();
+            _trayMeter = null;
+            _trayIcon?.Dispose();
+            _trayIcon = null;
 
             _chassis?.Dispose();
             _titleFont.Dispose();

@@ -116,6 +116,21 @@ Switch it off with **Meter the microphone** in Settings. The input meter then st
 level whenever another application is recording — a call, a game with voice chat — because in
 that case the endpoint meter reports on its own.
 
+#### The taskbar meter
+
+**Settings → "Show the output level on the taskbar icon"** turns the notification-area icon
+into a miniature bargraph of whatever is playing. The taskbar is the only part of CommPanel
+you can see while a game is running, so it is the one place a level reading is worth having
+— and it needs no window, nothing on top of the game, and nothing in the way.
+
+It is **off by default**, because it is the only thing CommPanel does that costs anything
+while it is hidden. Even switched on it is close to free: the level is quantised into seven
+steps and the icon is only redrawn when the step changes, so a silent minute redraws it once
+rather than six hundred times, and a steady level redraws it once and then stops. Every icon
+is built once and kept, so a long session draws each of the eight exactly once.
+
+Turning it off puts the ordinary icon back.
+
 #### Panel size
 
 **PANEL SIZE** in Settings scales the panel from 80% to 200%. It applies as you drag, and the

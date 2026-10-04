@@ -14,7 +14,7 @@ namespace CommPanel.Ui;
 internal sealed class SettingsForm : PanelDialog
 {
     /// <summary>Roughly how tall this gets, so the base can shrink it to fit the screen.</summary>
-    private const int LogicalHeight = 620;
+    private const int LogicalHeight = 640;
 
     private readonly AppSettings _settings;
 
@@ -27,6 +27,7 @@ internal sealed class SettingsForm : PanelDialog
     private PlateCheck _linkComms = null!;
     private PlateCheck _autoFallback = null!;
     private PlateCheck _showMeters = null!;
+    private PlateCheck _trayMeter = null!;
     private PlateCheck _meterMic = null!;
     private PlateCheck _watchHeadset = null!;
     private PlateCheck _queryHeadset = null!;
@@ -189,6 +190,7 @@ internal sealed class SettingsForm : PanelDialog
         }
 
         _showMeters = Row("Show level meters and volume faders");
+        _trayMeter = Row("Show the output level on the taskbar icon");
         _meterMic = Row("Meter the microphone while the panel is visible");
         _linkComms = Row("Switch the communications device too");
         _autoFallback = Row("Switch away from a device that goes offline");
@@ -317,6 +319,7 @@ internal sealed class SettingsForm : PanelDialog
         _linkComms.Checked = _settings.LinkCommunications;
         _autoFallback.Checked = _settings.AutoFallback;
         _showMeters.Checked = _settings.ShowMeters;
+        _trayMeter.Checked = _settings.TrayMeter;
         _bloomFader.Value = _settings.BloomIntensity;
         _sizeFader.Value = SliderFromScale(_settings.SafeFontScale);
         RefreshBloomPreview();
@@ -347,6 +350,7 @@ internal sealed class SettingsForm : PanelDialog
         _settings.LinkCommunications = _linkComms.Checked;
         _settings.AutoFallback = _autoFallback.Checked;
         _settings.ShowMeters = _showMeters.Checked;
+        _settings.TrayMeter = _trayMeter.Checked;
         _settings.BloomIntensity = _bloomFader.Value;
         _settings.FontScale = ScaleFromSlider(_sizeFader.Value);
         _settings.MeterMicrophone = _meterMic.Checked;

@@ -3,6 +3,10 @@ bin/
 obj/
 dist/
 
+# Packaged release: a self-contained build is 145 MB of .NET runtime and belongs on a
+# GitHub release, not in the history.
+release/
+
 # User settings: contains audio device GUIDs and any learned headset profile,
 # which are specific to one machine and should never be published.
 CommPanel.settings.json
