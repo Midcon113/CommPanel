@@ -1139,9 +1139,9 @@ internal sealed partial class PanelForm : Form
     /// A wireless headset powered down. Windows still believes its endpoint is alive, so the
     /// loss is injected here by adapter name and handed to the ordinary failover path.
     /// </summary>
-    private void OnHeadsetPoweredOff(string adapterName) => MarshalToUi(() =>
+    private void OnHeadsetPoweredOff(string adapterName, bool firstReading) => MarshalToUi(() =>
     {
-        Log.Write("headset", adapterName + " reported powered OFF");
+        Log.Write("headset", adapterName + (firstReading ? " was already OFF at startup" : " reported powered OFF"));
 
         // Mark the device offline whether or not it was the one in use. A headset that times
         // out while unselected is exactly the case that used to go unnoticed: the panel went
@@ -1159,9 +1159,9 @@ internal sealed partial class PanelForm : Form
     /// The headset came back. This only undoes a switch we made ourselves, and only while
     /// the fallback device is still the one in use - a manual choice in the meantime wins.
     /// </summary>
-    private void OnHeadsetPoweredOn(string adapterName) => MarshalToUi(() =>
+    private void OnHeadsetPoweredOn(string adapterName, bool firstReading) => MarshalToUi(() =>
     {
-        Log.Write("headset", adapterName + " reported powered ON");
+        Log.Write("headset", adapterName + (firstReading ? " was already ON at startup" : " reported powered ON"));
 
         string? returnOutput = _returnOutputId;
         string? returnInput = _returnInputId;
@@ -1186,7 +1186,12 @@ internal sealed partial class PanelForm : Form
             // already off never switched away from it, so it has no earlier choice to
             // restore. Switching a headset on is a clear enough statement of intent on its
             // own, and the setting says this is what it does.
-            if (!selected)
+            //
+            // Not on the first reading, though. That is not somebody reaching for the
+            // switch, it is CommPanel starting up and finding out what the headset was
+            // already doing - and taking the audio off whatever they were listening to on
+            // the strength of that is not something anybody asked for.
+            if (!selected && !firstReading)
             {
                 selected = SelectAdapter(EDataFlow.Render, _outputs, adapterName);
                 selected |= SelectAdapter(EDataFlow.Capture, _inputs, adapterName);
@@ -1195,7 +1200,7 @@ internal sealed partial class PanelForm : Form
 
         // Always say something. Silence here is indistinguishable from not having noticed,
         // which is exactly how this looked from the outside.
-        SetStatus(adapterName.ToUpperInvariant() + (selected ? " BACK ON — SELECTED" : " BACK ON"),
+        SetStatus(adapterName.ToUpperInvariant() + (firstReading ? " IS ON" : selected ? " BACK ON — SELECTED" : " BACK ON"),
                   PanelTheme.LampGreen);
     });
 
@@ -1571,6 +1576,11 @@ internal sealed partial class PanelForm : Form
         {
             SetStatus(direction + " → " + device.ShortName.ToUpperInvariant(), PanelTheme.LampGreen);
         }
+
+        // Logged with the adapter as well: two devices can share a short name, and in the
+        // log "HEADPHONES" on its own does not say which one.
+        Log.Write("switch", string.Format("{0} to {1}{2}", direction, device.ShortName,
+            string.IsNullOrEmpty(device.Adapter) ? string.Empty : " (" + device.Adapter + ")"));
 
         // A deliberate choice cancels any pending auto-return and shapes the failover order.
         if (device.Flow == EDataFlow.Render) _returnOutputId = null; else _returnInputId = null;

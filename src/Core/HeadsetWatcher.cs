@@ -27,10 +27,14 @@ internal sealed class HeadsetWatcher : IDisposable
     /// Raised on a background thread with the adapter name of the headset that just powered
     /// down, e.g. "Arctis Nova Pro Wireless".
     /// </summary>
-    public event Action<string>? HeadsetPoweredOff;
+    /// <summary>
+    /// The adapter, and whether this was the first reading rather than a change. The first
+    /// reading is simply what the headset was already doing - nobody touched the switch.
+    /// </summary>
+    public event Action<string, bool>? HeadsetPoweredOff;
 
     /// <summary>Raised on a background thread when the headset comes back.</summary>
-    public event Action<string>? HeadsetPoweredOn;
+    public event Action<string, bool>? HeadsetPoweredOn;
 
     public bool IsWatching
     {
@@ -163,10 +167,10 @@ internal sealed class HeadsetWatcher : IDisposable
         }
     }
 
-    private void OnStatus(HeadsetProfile profile, bool poweredOn)
+    private void OnStatus(HeadsetProfile profile, bool poweredOn, bool firstReading)
     {
-        if (poweredOn) HeadsetPoweredOn?.Invoke(profile.AdapterMatch);
-        else HeadsetPoweredOff?.Invoke(profile.AdapterMatch);
+        if (poweredOn) HeadsetPoweredOn?.Invoke(profile.AdapterMatch, firstReading);
+        else HeadsetPoweredOff?.Invoke(profile.AdapterMatch, firstReading);
     }
 
     public void Dispose()
@@ -183,7 +187,7 @@ internal sealed class HeadsetWatcher : IDisposable
 
         public HeadsetProfile Profile { get; }
         public HidReportReader Reader { get; set; } = null!;
-        public Action<HeadsetProfile, bool>? Report { get; set; }
+        public Action<HeadsetProfile, bool, bool>? Report { get; set; }
 
         /// <summary>Interface that accepts a status query, when the profile supports one.</summary>
         public HidReportReader? QueryReader { get; set; }
@@ -197,9 +201,11 @@ internal sealed class HeadsetWatcher : IDisposable
             if (state is null) return;
 
             if (LastKnownState == state) return;
+
+            bool firstReading = LastKnownState is null;
             StateBox = state.Value;
 
-            Report?.Invoke(Profile, state.Value);
+            Report?.Invoke(Profile, state.Value, firstReading);
         }
 
         /// <summary>Null until a report has actually been seen for this device.</summary>
@@ -214,9 +220,11 @@ internal sealed class HeadsetWatcher : IDisposable
 
             // These base stations repeat their status; only transitions are worth reporting.
             if (LastKnownState == state) return;
+
+            bool firstReading = LastKnownState is null;
             StateBox = state.Value;
 
-            Report?.Invoke(Profile, state.Value);
+            Report?.Invoke(Profile, state.Value, firstReading);
         }
     }
 }

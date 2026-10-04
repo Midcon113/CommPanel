@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Diagnostics;
 using CommPanel.Audio;
 using CommPanel.Core;
@@ -34,7 +35,13 @@ internal static class Program
         try { Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.BelowNormal; }
         catch { /* not fatal */ }
 
-        Log.Start(typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown");
+        // The informational version carries the commit, so a log says exactly which build
+        // produced it - the assembly version only moves when a release is cut.
+        Log.Start(typeof(Program).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion
+            ?? typeof(Program).Assembly.GetName().Version?.ToString()
+            ?? "unknown");
 
         var settings = AppSettings.Load();
         Log.Write("settings", "loaded from " + (settings.FilePath ?? "defaults"));
