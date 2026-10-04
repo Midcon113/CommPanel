@@ -373,15 +373,15 @@ internal sealed class VoiceSession : IDisposable, IVoiceRepair
     // All of them are things CommPanel has the standing to change: its own mixer entry, its
     // own streams, and the endpoint its own call is using.
 
-    bool IVoiceRepair.RestoreOwnVolume(out string? what)
+    RepairOutcome IVoiceRepair.RestoreOwnVolume(out string? what)
     {
         what = null;
 
         string? outputId = CurrentRenderId();
-        if (outputId is null) return false;
+        if (outputId is null) return RepairOutcome.NothingToDo;
 
         using var mixer = _audio.OpenSessionMixer(outputId);
-        if (mixer is null) return false;
+        if (mixer is null) return RepairOutcome.NothingToDo;
 
         uint us = (uint)Environment.ProcessId;
 
@@ -398,39 +398,44 @@ internal sealed class VoiceSession : IDisposable, IVoiceRepair
             if (level < 0.05f) session.WriteVolume(1f);
 
             what = "COMMPANEL WAS MUTED IN THE WINDOWS MIXER — TURNED BACK UP";
-            return true;
+            return RepairOutcome.Fixed;
         }
 
-        return false;
+        return RepairOutcome.NothingToDo;
     }
 
-    bool IVoiceRepair.RestoreOutputEndpoint(out string? what) =>
-        RestoreEndpoint(CurrentRenderId(), "PLAYBACK DEVICE", out what);
+    RepairOutcome IVoiceRepair.ReportOutputMuted(out string? what) =>
+        ReportMuted(CurrentRenderId(), "PLAYBACK DEVICE", "TO HEAR THEM", out what);
 
-    bool IVoiceRepair.RestoreInputEndpoint(out string? what) =>
-        RestoreEndpoint(_capture?.DeviceId, "MICROPHONE", out what);
+    RepairOutcome IVoiceRepair.ReportInputMuted(out string? what) =>
+        ReportMuted(_capture?.DeviceId, "MICROPHONE", "TO BE HEARD", out what);
 
-    private bool RestoreEndpoint(string? deviceId, string label, out string? what)
+    /// <summary>
+    /// Says whether Windows has a device muted or turned down, and changes nothing.
+    ///
+    /// CommPanel deliberately does not undo this. A muted device is a setting the person
+    /// made - a microphone most of all, which is often muted with a button on the headset -
+    /// and a program that quietly unmutes it would start playing, or sending, audio somebody
+    /// believed was off.
+    /// </summary>
+    private RepairOutcome ReportMuted(string? deviceId, string label, string why, out string? what)
     {
         what = null;
-        if (deviceId is null) return false;
+        if (deviceId is null) return RepairOutcome.NothingToDo;
 
         using var controls = _audio.OpenControls(deviceId);
-        if (controls is null || !controls.HasVolume) return false;
+        if (controls is null || !controls.HasVolume) return RepairOutcome.NothingToDo;
 
         bool muted = controls.ReadMute() ?? false;
         float level = controls.ReadVolume() ?? 1f;
 
-        if (!muted && level >= 0.05f) return false;
+        if (!muted && level >= 0.05f) return RepairOutcome.NothingToDo;
 
-        if (muted) controls.WriteMute(false);
+        what = muted
+            ? "WINDOWS HAS YOUR " + label + " MUTED — UNMUTE IT " + why
+            : "YOUR " + label + " IS TURNED ALL THE WAY DOWN — TURN IT UP " + why;
 
-        // Raised only to a modest level, never to full: a device that was silent should not
-        // come back at a volume that makes somebody jump.
-        if (level < 0.05f) controls.WriteVolume(0.4f);
-
-        what = "THE " + label + " WAS MUTED IN WINDOWS — UNMUTED IT";
-        return true;
+        return RepairOutcome.NeedsYou;
     }
 
     /// <summary>
@@ -438,61 +443,61 @@ internal sealed class VoiceSession : IDisposable, IVoiceRepair
     /// anybody is wearing. If the ordinary default is a different device, move the call there:
     /// that changes nothing in Windows, only where this one stream goes.
     /// </summary>
-    bool IVoiceRepair.MoveCallToDefaultOutput(out string? what)
+    RepairOutcome IVoiceRepair.MoveCallToDefaultOutput(out string? what)
     {
         what = null;
 
         string? current = CurrentRenderId();
         string? console = _audio.GetDefaultId(EDataFlow.Render, ERole.Console);
 
-        if (console is null || current is null) return false;
-        if (string.Equals(current, console, StringComparison.OrdinalIgnoreCase)) return false;
+        if (console is null || current is null) return RepairOutcome.NothingToDo;
+        if (string.Equals(current, console, StringComparison.OrdinalIgnoreCase)) return RepairOutcome.NothingToDo;
 
         lock (_gate)
         {
-            if (_link is null) return false;
+            if (_link is null) return RepairOutcome.NothingToDo;
 
             _render?.Dispose();
             _render = _audio.OpenVoiceRender(console, _link.TakeVoice, out _);
-            if (_render is null) return false;
+            if (_render is null) return RepairOutcome.NothingToDo;
 
             _renderOverrideId = console;
         }
 
         what = "MOVED THE CALL TO " + (NameOf(console, EDataFlow.Render) ?? "YOUR DEFAULT SPEAKERS").ToUpperInvariant();
-        return true;
+        return RepairOutcome.Fixed;
     }
 
-    bool IVoiceRepair.ReopenRender(out string? what)
+    RepairOutcome IVoiceRepair.ReopenRender(out string? what)
     {
         what = null;
 
         lock (_gate)
         {
-            if (_link is null) return false;
+            if (_link is null) return RepairOutcome.NothingToDo;
 
             string? outputId = CurrentRenderId();
-            if (outputId is null) return false;
+            if (outputId is null) return RepairOutcome.NothingToDo;
 
             _render?.Dispose();
             _render = _audio.OpenVoiceRender(outputId, _link.TakeVoice, out _);
         }
 
         what = "REOPENED PLAYBACK";
-        return true;
+        return RepairOutcome.Fixed;
     }
 
-    bool IVoiceRepair.ReopenCapture(out string? what)
+    RepairOutcome IVoiceRepair.ReopenCapture(out string? what)
     {
         what = null;
 
         lock (_gate)
         {
-            if (_link is null) return false;
+            if (_link is null) return RepairOutcome.NothingToDo;
 
             string? inputId = _capture?.DeviceId
                               ?? _audio.GetDefaultId(EDataFlow.Capture, ERole.Communications);
-            if (inputId is null) return false;
+            if (inputId is null) return RepairOutcome.NothingToDo;
 
             _capture?.Dispose();
             _capture = _audio.OpenVoiceCapture(inputId, _link.SendVoice, out _);
@@ -501,7 +506,7 @@ internal sealed class VoiceSession : IDisposable, IVoiceRepair
         }
 
         what = "REOPENED THE MICROPHONE";
-        return true;
+        return RepairOutcome.Fixed;
     }
 
     private string? CurrentRenderId() =>

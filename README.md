@@ -427,7 +427,7 @@ play**, four bytes once a second. That turns an invisible problem into a line on
 | **THEIR VOICE IS ARRIVING BUT NOT PLAYING** | Your playback. Their audio is reaching this machine and not coming out. CommPanel starts fixing it. |
 | **YOUR AUDIO IS NOT REACHING THEM** | The link has gone one-way. Nothing local to fix — hang up and call again. |
 | **THEY ARE RECEIVING YOU BUT THEIR PLAYBACK IS SILENT** | Their end, not yours. Their copy is already working on it. |
-| **WINDOWS HAS YOUR MICROPHONE MUTED** | Exactly that. CommPanel unmutes it. |
+| **WINDOWS HAS YOUR MICROPHONE MUTED** | Exactly that. Unmute it yourself and the call recovers. |
 | **MICROPHONE STOPPED** | The capture stream died. CommPanel reopens it. |
 
 #### What it fixes by itself
@@ -437,9 +437,7 @@ usually wrong, one every few seconds, and says which one it tried:
 
 1. **CommPanel muted in the Windows volume mixer.** Its own entry, so it simply turns it
    back up. This is the most common cause of one application having no sound.
-2. **The playback device muted in Windows.** Unmuted, and brought up to a modest level —
-   never to full, so a device that was silent does not come back loud enough to make
-   anybody jump.
+2. **The playback device muted in Windows.** Reported, not changed — see below.
 3. **The call is playing into a device nobody is listening to.** A call uses the
    Communications device, which is not always the one you are wearing. If your ordinary
    default is a different device, the call moves there. This changes nothing in Windows —
@@ -451,6 +449,20 @@ If none of that works it says so plainly rather than pretending to keep trying.
 It only ever touches its own end. Your friend's copy runs the same checks on their machine
 and fixes their side — CommPanel never reaches across a call to change someone else's
 settings.
+
+#### What it will not touch
+
+**It never changes Windows' own mute or volume settings.** If it finds your playback device
+or your microphone muted, it says so and stops; it does not quietly undo it.
+
+That is deliberate. A muted device is a setting you made, and a microphone most of all —
+it is often muted with a button on the headset itself. A program that silently unmuted it
+would start sending audio you believed was private. So the panel tells you which device is
+muted and what to do, and waits for you.
+
+CommPanel's own entry in the Windows volume mixer is a different matter: that one belongs to
+it, so it does put that back by itself.
+
 
 #### What it will not do
 

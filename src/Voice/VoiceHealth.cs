@@ -59,27 +59,47 @@ internal sealed class VoiceVitals
     public required LinkReport? Peer { get; init; }
 }
 
+/// <summary>What a repair step managed to do about a fault.</summary>
+internal enum RepairOutcome
+{
+    /// <summary>This was not the problem; try the next thing.</summary>
+    NothingToDo = 0,
+
+    /// <summary>Put right, and the call should recover by itself.</summary>
+    Fixed,
+
+    /// <summary>
+    /// Found, but only the person can put it right. CommPanel does not change Windows'
+    /// own mute or volume settings behind someone's back - least of all a muted
+    /// microphone, which is usually muted on purpose.
+    /// </summary>
+    NeedsYou,
+
+    /// <summary>There is no such rung: the ladder has been worked all the way down.</summary>
+    Exhausted
+}
+
 /// <summary>
 /// What the health monitor is allowed to do about a fault. Implemented by the session, which
 /// is the thing that actually owns the devices.
 /// </summary>
 internal interface IVoiceRepair
 {
-    /// <summary>Our own entry in the Windows volume mixer was muted or at zero.</summary>
-    bool RestoreOwnVolume(out string? what);
+    /// <summary>CommPanel's own entry in the Windows volume mixer was muted or at zero.</summary>
+    RepairOutcome RestoreOwnVolume(out string? what);
 
-    /// <summary>The playback endpoint itself was muted or at zero.</summary>
-    bool RestoreOutputEndpoint(out string? what);
+    /// <summary>Windows has the playback device muted or turned down. Reported, never changed.</summary>
+    RepairOutcome ReportOutputMuted(out string? what);
 
-    /// <summary>The microphone endpoint itself was muted or at zero.</summary>
-    bool RestoreInputEndpoint(out string? what);
+    /// <summary>Windows has the microphone muted or turned down. Reported, never changed.</summary>
+    RepairOutcome ReportInputMuted(out string? what);
 
     /// <summary>The call is playing into a device that is not the one in use.</summary>
-    bool MoveCallToDefaultOutput(out string? what);
+    RepairOutcome MoveCallToDefaultOutput(out string? what);
 
-    bool ReopenRender(out string? what);
+    RepairOutcome ReopenRender(out string? what);
 
-    bool ReopenCapture(out string? what);
+    RepairOutcome ReopenCapture(out string? what);
 }
 
 /// <summary>
@@ -112,6 +132,7 @@ internal sealed class VoiceHealth
     private int _notReceivingSeconds;
 
     private int _repairStep;
+    private bool _waitingOnUser;
     private DateTime _lastRepairAt = DateTime.MinValue;
     private string? _lastRepairWhat;
 
@@ -243,10 +264,21 @@ internal sealed class VoiceHealth
     /// Reports a fault and takes the next repair step, at most one every few seconds. Stepping
     /// rather than retrying means each possible cause is tried once and the result is visible,
     /// instead of the same failing fix being hammered.
+    ///
+    /// A step that finds something only the person can put right stops the ladder: nothing
+    /// further down would help, and the message becomes an instruction rather than a progress
+    /// report.
     /// </summary>
-    private void Fault(VoiceHealthCode code, string message, Func<int, (bool Tried, string? What)> step)
+    private void Fault(VoiceHealthCode code, string message,
+                       Func<int, (RepairOutcome Outcome, string? What)> ladder)
     {
         Code = code;
+
+        if (_waitingOnUser)
+        {
+            Message = _lastRepairWhat ?? message;
+            return;
+        }
 
         if (_now() - _lastRepairAt < TimeSpan.FromSeconds(FaultSeconds))
         {
@@ -255,68 +287,79 @@ internal sealed class VoiceHealth
         }
 
         _lastRepairAt = _now();
-        var (tried, what) = step(_repairStep++);
+        var (outcome, what) = ladder(_repairStep++);
 
-        if (tried && what is not null)
+        switch (outcome)
         {
-            _lastRepairWhat = what;
-            Message = what;
-            Code = VoiceHealthCode.Repairing;
-            return;
-        }
+            case RepairOutcome.Fixed when what is not null:
+                _lastRepairWhat = what;
+                Message = what;
+                Code = VoiceHealthCode.Repairing;
+                break;
 
-        if (!tried)
-        {
-            // The ladder is exhausted; say so plainly rather than pretending to keep working.
-            Message = message + " — NOTHING LEFT TO TRY AUTOMATICALLY";
-            return;
-        }
+            case RepairOutcome.NeedsYou when what is not null:
+                _waitingOnUser = true;
+                _lastRepairWhat = what;
+                Message = what;
+                break;
 
-        Message = message;
+            case RepairOutcome.Exhausted:
+                Message = message + " — NOTHING LEFT TO TRY AUTOMATICALLY";
+                break;
+
+            default:
+                Message = message;
+                break;
+        }
     }
 
     /// <summary>
-    /// The output repair ladder, in the order these things are actually wrong. Our own mixer
-    /// entry first because it is ours to fix and costs nobody anything; moving the call to a
-    /// different device last, because it is the most visible.
+    /// The output ladder, in the order these things are actually wrong. CommPanel's own mixer
+    /// entry first, because it is the most common cause and is ours to put right. Windows'
+    /// own mute is only ever reported: it belongs to the person, not to this program.
     /// </summary>
-    private (bool, string?) RepairOutput(int step) => step switch
+    private (RepairOutcome, string?) RepairOutput(int step) => step switch
     {
         0 => Try(_repair.RestoreOwnVolume),
-        1 => Try(_repair.RestoreOutputEndpoint),
+        1 => Try(_repair.ReportOutputMuted),
         2 => Try(_repair.MoveCallToDefaultOutput),
         3 => Try(_repair.ReopenRender),
-        _ => (false, null)
+        _ => (RepairOutcome.Exhausted, null)
     };
 
-    private (bool, string?) RepairCapture(int step) => step switch
+    private (RepairOutcome, string?) RepairCapture(int step) => step switch
     {
         0 => Try(_repair.ReopenCapture),
-        1 => Try(_repair.RestoreInputEndpoint),
-        _ => (false, null)
+        1 => Try(_repair.ReportInputMuted),
+        _ => (RepairOutcome.Exhausted, null)
     };
 
-    private (bool, string?) RepairInput(int step) => step switch
+    /// <summary>
+    /// A microphone muted in Windows is almost always muted on purpose - often with a button
+    /// on the headset itself. Unmuting it would start sending audio somebody believes is
+    /// private, so this says so and stops.
+    /// </summary>
+    private (RepairOutcome, string?) RepairInput(int step) => step switch
     {
-        0 => Try(_repair.RestoreInputEndpoint),
-        1 => Try(_repair.ReopenCapture),
-        _ => (false, null)
+        0 => Try(_repair.ReportInputMuted),
+        _ => (RepairOutcome.Exhausted, null)
     };
 
-    private delegate bool RepairAction(out string? what);
+    private delegate RepairOutcome RepairAction(out string? what);
 
-    private static (bool, string?) Try(RepairAction action)
+    private static (RepairOutcome, string?) Try(RepairAction action)
     {
         try
         {
-            bool changed = action(out string? what);
-            return (true, changed ? what : null);
+            RepairOutcome outcome = action(out string? what);
+            return (outcome, what);
         }
         catch
         {
-            return (true, null);
+            return (RepairOutcome.NothingToDo, null);
         }
     }
+
 
     /// <summary>Everything, for when there is no longer a call to judge.</summary>
     private void Reset()
@@ -337,6 +380,7 @@ internal sealed class VoiceHealth
     {
         _repairStep = 0;
         _lastRepairWhat = null;
+        _waitingOnUser = false;
     }
 
     /// <summary>Only a report that arrived recently says anything about now.</summary>
