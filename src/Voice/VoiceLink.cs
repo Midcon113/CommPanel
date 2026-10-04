@@ -30,9 +30,13 @@ internal sealed class VoiceLink : IDisposable
     private const byte TypeHello = 0;
     private const byte TypeAudio = 1;
     private const byte TypeBye = 2;
+    private const byte TypeReport = 3;
 
     private const int HeaderLength = 11;
     private static readonly byte[] Magic = "CPV1"u8.ToArray();
+
+    /// <summary>How often each end tells the other what it can hear and play.</summary>
+    private static readonly TimeSpan ReportInterval = TimeSpan.FromMilliseconds(1000);
 
     /// <summary>Hellos double as keepalive and as the hole-punching knock.</summary>
     private static readonly TimeSpan HelloInterval = TimeSpan.FromMilliseconds(400);
@@ -65,6 +69,9 @@ internal sealed class VoiceLink : IDisposable
     private ushort _sequence;
     private long _lastPeerTicks;
     private DateTime _lastHello = DateTime.MinValue;
+    private DateTime _lastReport = DateTime.MinValue;
+    private float _incomingPeak;
+    private long _audioFramesReceived;
     private bool _prebuffering = true;
 
     public VoiceLink(int listenPort = 0, string? linkCode = null)
@@ -107,6 +114,32 @@ internal sealed class VoiceLink : IDisposable
     public int BufferedFrames
     {
         get { lock (_bufferGate) return _received.Count; }
+    }
+
+    /// <summary>
+    /// What this end wants the far end to know about it. Set by the session once a second;
+    /// the link puts it on the wire so each side can see the other's half of the call.
+    /// </summary>
+    public LinkReport LocalReport { get; set; }
+
+    /// <summary>The far end's last report, and when it arrived.</summary>
+    public LinkReport? PeerReport { get; private set; }
+
+    public DateTime PeerReportAt { get; private set; } = DateTime.MinValue;
+
+    /// <summary>Audio frames carrying real signal, counted since the call started.</summary>
+    public long AudioFramesReceived => Interlocked.Read(ref _audioFramesReceived);
+
+    /// <summary>
+    /// Loudest sample that has arrived from the peer since the last read. Read by the health
+    /// monitor: signal arriving here while nothing comes out of the speakers is what tells
+    /// one-way audio apart from the other person simply being quiet.
+    /// </summary>
+    public float TakeIncomingPeak()
+    {
+        float peak = _incomingPeak;
+        _incomingPeak = 0f;
+        return peak;
     }
 
     /// <summary>Raised on the link's own thread whenever the state changes.</summary>
@@ -267,6 +300,13 @@ internal sealed class VoiceLink : IDisposable
             try { SendControl(TypeHello, peer); } catch { /* retried next tick */ }
         }
 
+        // Only worth sending once there is a call to describe.
+        if (State == VoiceLinkState.Connected && now - _lastReport >= ReportInterval)
+        {
+            _lastReport = now;
+            try { SendReport(peer); } catch { /* retried next tick */ }
+        }
+
         if (State == VoiceLinkState.Connected)
         {
             long last = Interlocked.Read(ref _lastPeerTicks);
@@ -322,6 +362,17 @@ internal sealed class VoiceLink : IDisposable
         }
 
         if (State != VoiceLinkState.Connected) SetState(VoiceLinkState.Connected);
+
+        if (type == TypeReport)
+        {
+            if (length >= HeaderLength + 4)
+            {
+                PeerReport = LinkReport.Decode(buffer, HeaderLength);
+                PeerReportAt = DateTime.UtcNow;
+            }
+            return;
+        }
+
         if (type != TypeAudio) return;
 
         int payload = length - HeaderLength;
@@ -334,6 +385,16 @@ internal sealed class VoiceLink : IDisposable
             frame[i] = (short)(buffer[offset] | (buffer[offset + 1] << 8));
             offset += 2;
         }
+
+        float peak = 0f;
+        foreach (short sample in frame)
+        {
+            float magnitude = Math.Abs(sample / 32768f);
+            if (magnitude > peak) peak = magnitude;
+        }
+
+        if (peak > _incomingPeak) _incomingPeak = peak;
+        if (peak > VoiceFormat.SignalFloor) Interlocked.Increment(ref _audioFramesReceived);
 
         lock (_bufferGate)
         {
@@ -366,6 +427,18 @@ internal sealed class VoiceLink : IDisposable
         if (peer is not null && from.Equals(peer)) return true;
 
         return _linkId != 0 && peer is not null && from.Address.Equals(peer.Address);
+    }
+
+    private void SendReport(IPEndPoint peer)
+    {
+        lock (_sendGate)
+        {
+            var packet = new byte[HeaderLength + 4];
+            WriteHeader(packet, TypeReport, ++_sequence);
+            LocalReport.Encode(packet, HeaderLength);
+            _socket.SendTo(packet, peer);
+            PacketsSent++;
+        }
     }
 
     private void SendControl(byte type, IPEndPoint peer)

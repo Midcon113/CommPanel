@@ -43,6 +43,19 @@ internal sealed class VoiceRender : IDisposable
     /// <summary>Loudest sample played since the last read, for the panel's receive meter.</summary>
     public float Peak { get; private set; }
 
+    private float _healthPeak;
+
+    /// <summary>
+    /// Peak for the health monitor, kept separate from the meter's so the two do not
+    /// consume each other's readings.
+    /// </summary>
+    public float TakeHealthPeak()
+    {
+        float peak = _healthPeak;
+        _healthPeak = 0f;
+        return peak;
+    }
+
     public static VoiceRender? Open(IMMDeviceEnumerator enumerator, string deviceId,
                                     Func<short[]?> frameSource, out string? error)
     {
@@ -194,6 +207,7 @@ internal sealed class VoiceRender : IDisposable
 
         _pending.RemoveRange(0, Math.Min((int)free, _pending.Count));
         Peak = peak;
+        if (peak > _healthPeak) _healthPeak = peak;
 
         if (_isFloat)
         {

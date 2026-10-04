@@ -355,6 +355,8 @@ What the strip shows:
 | **CALL… / HANG UP** | Dials, or ends the call. Amber while calling, green once connected. |
 | **MIC** | Cuts your microphone. Lit means live. Only works during a call. |
 | **SEND / RECV** | Your level going out, and theirs coming in. |
+| **CHECK LINE** | Tests whether a direct call can get through this network. No call is placed. |
+| **health line** | What both ends make of the call — see [When a call goes one-way](#when-a-call-goes-one-way). |
 
 #### The microphone is only open during a call
 
@@ -384,10 +386,81 @@ the other machine's `192.168.x.x:47821` instead.
 
 The first call will raise a Windows Firewall prompt. Allow it on **private** networks.
 
+#### CHECK LINE — before you bother trying
+
+**CHECK LINE** asks three public servers what address this machine appears to come from, and
+says in one line whether a direct call can get through this network. It places no call and
+tells the other person nothing; it takes a couple of seconds.
+
+| What it says | What it means |
+|---|---|
+| **DIRECT CALLS SHOULD WORK** | Your router gives out one stable address and port. This is what you want. |
+| **DIRECT CALLS WILL NOT CONNECT** | Your router opens a different port for every destination, so there is no address to hand out. CommPanel cannot work around this. |
+| **NO REPLY FROM ANY SERVER** | UDP is being blocked — a firewall, a security suite, or a company or school network. |
+| **COULD NOT TELL** | More than one connection is active, usually a VPN. Turn it off and check again. |
+
+It also warns when your provider is **sharing one public address between customers** rather
+than giving you your own. Calls usually still work, but if one never connects, that is the
+first thing to suspect and only the provider can change it.
+
+Have the other person press it too and read you their line. Two green answers before you
+try is a great deal better than two people staring at an amber lamp.
+
 #### The port
 
 **Settings → VOICE LINK PORT** sets the UDP port, `47821` by default. Change it only if
 something else on your machine already uses it — your link code changes with it.
+
+### When a call goes one-way
+
+The worst fault in a voice call is the one neither person can see. You talk, your own meter
+moves, your packets leave — and the other person hears nothing. From your end everything
+looks right. From theirs, nothing is happening. So you both say "can you hear me now?" and
+get nowhere.
+
+CommPanel fixes this by having **each end tell the other what it can actually hear and
+play**, four bytes once a second. That turns an invisible problem into a line on the panel:
+
+| The panel says | What is actually wrong |
+|---|---|
+| **BOTH ENDS HEALTHY** | Nothing. Both halves are confirmed working by the other end. |
+| **THEIR VOICE IS ARRIVING BUT NOT PLAYING** | Your playback. Their audio is reaching this machine and not coming out. CommPanel starts fixing it. |
+| **YOUR AUDIO IS NOT REACHING THEM** | The link has gone one-way. Nothing local to fix — hang up and call again. |
+| **THEY ARE RECEIVING YOU BUT THEIR PLAYBACK IS SILENT** | Their end, not yours. Their copy is already working on it. |
+| **WINDOWS HAS YOUR MICROPHONE MUTED** | Exactly that. CommPanel unmutes it. |
+| **MICROPHONE STOPPED** | The capture stream died. CommPanel reopens it. |
+
+#### What it fixes by itself
+
+When your playback has gone silent, CommPanel works down the list of things that are
+usually wrong, one every few seconds, and says which one it tried:
+
+1. **CommPanel muted in the Windows volume mixer.** Its own entry, so it simply turns it
+   back up. This is the most common cause of one application having no sound.
+2. **The playback device muted in Windows.** Unmuted, and brought up to a modest level —
+   never to full, so a device that was silent does not come back loud enough to make
+   anybody jump.
+3. **The call is playing into a device nobody is listening to.** A call uses the
+   Communications device, which is not always the one you are wearing. If your ordinary
+   default is a different device, the call moves there. This changes nothing in Windows —
+   only where this one stream goes.
+4. **The stream itself is stuck.** Reopened.
+
+If none of that works it says so plainly rather than pretending to keep trying.
+
+It only ever touches its own end. Your friend's copy runs the same checks on their machine
+and fixes their side — CommPanel never reaches across a call to change someone else's
+settings.
+
+#### What it will not do
+
+It will not call a quiet room a fault. A silent microphone and a dead microphone look
+identical on a meter, so silence alone is never treated as a problem — only facts read from
+the device itself, like Windows having the microphone muted, or the capture stream going
+dead. Half a minute of nobody talking stays silent on the panel.
+
+If a fault turns up while the panel is in the tray, a notification balloon says so, because
+that is exactly when nobody is looking at the panel.
 
 ## Performance
 

@@ -23,6 +23,8 @@ internal sealed partial class PanelForm
     private readonly PlateButton _voiceMute = new();
     private readonly LevelMeter _voiceSend = new();
     private readonly LevelMeter _voiceReceive = new();
+    private readonly PlateLabel _voiceHealth = new();
+    private readonly PlateButton _voiceCheck = new();
 
     /// <summary>
     /// Drives the voice strip's meters and keeps its keys in step with the link's state.
@@ -74,6 +76,15 @@ internal sealed partial class PanelForm
         _voiceMute.LampColor = PanelTheme.LampGreen;
         _voiceMute.Click += (_, _) => ToggleVoiceMute();
 
+        _voiceHealth.Font = _stencilFont;
+        _voiceHealth.ShowLamp = true;
+        _voiceHealth.LampColor = PanelTheme.LampGreen;
+        _voiceHealth.TextColor = PanelTheme.TextSecondary;
+
+        _voiceCheck.Font = _stencilFont;
+        _voiceCheck.Text = "CHECK LINE";
+        _voiceCheck.Click += (_, _) => ShowConnectionCheck();
+
         _voiceSend.Caption = "SEND";
         _voiceSend.CaptionFont = _stencilFont;
         _voiceReceive.Caption = "RECV";
@@ -85,7 +96,7 @@ internal sealed partial class PanelForm
         Controls.AddRange(new Control[]
         {
             _voiceToggle, _voiceCode, _voiceCopy, _voiceCall, _voiceMute,
-            _voiceSend, _voiceReceive
+            _voiceSend, _voiceReceive, _voiceHealth, _voiceCheck
         });
     }
 
@@ -93,7 +104,7 @@ internal sealed partial class PanelForm
     private int VoicePlateHeight()
     {
         if (!VoiceExpanded) return 0;
-        return Scaled(VoicePadding) * 2 + Scaled(VoiceRowHeight) * 2 + Scaled(VoiceRowGap);
+        return Scaled(VoicePadding) * 2 + Scaled(VoiceRowHeight) * 3 + Scaled(VoiceRowGap) * 2;
     }
 
     /// <summary>
@@ -147,6 +158,13 @@ internal sealed partial class PanelForm
         _voiceSend.Bounds = new Rectangle(meterLeft, rowTop, meterWidth, rowHeight);
         _voiceReceive.Bounds = new Rectangle(meterLeft + meterWidth + gap, rowTop, meterWidth, rowHeight);
 
+        // Row three: what the monitor makes of the call, and the key that tests the line.
+        rowTop += rowHeight + Scaled(VoiceRowGap);
+
+        int checkWidth = Scaled(118);
+        _voiceCheck.Bounds = new Rectangle(right - checkWidth, rowTop, checkWidth, rowHeight);
+        _voiceHealth.Bounds = new Rectangle(left, rowTop, _voiceCheck.Left - gap - left, rowHeight);
+
         return _voicePlate.Bottom;
     }
 
@@ -158,6 +176,8 @@ internal sealed partial class PanelForm
         _voiceMute.Visible = visible;
         _voiceSend.Visible = visible;
         _voiceReceive.Visible = visible;
+        _voiceHealth.Visible = visible;
+        _voiceCheck.Visible = visible;
     }
 
     /// <summary>Draws the voice section's engraved parts into the cached chassis bitmap.</summary>
@@ -182,6 +202,8 @@ internal sealed partial class PanelForm
         _voiceMute.Font = _stencilFont;
         _voiceSend.CaptionFont = _stencilFont;
         _voiceReceive.CaptionFont = _stencilFont;
+        _voiceHealth.Font = _stencilFont;
+        _voiceCheck.Font = _stencilFont;
     }
 
     // ----------------------------------------------------------------- state
@@ -212,6 +234,7 @@ internal sealed partial class PanelForm
         if (_voice is null)
         {
             _voice = new VoiceSession(_audio);
+            _voice.HealthChanged += OnVoiceHealthChanged;
 
             if (!_voice.Start(_settings.SafeVoicePort, null, out string? error))
             {
@@ -251,6 +274,8 @@ internal sealed partial class PanelForm
     private void StopVoice()
     {
         _voiceTimer.Stop();
+
+        if (_voice is not null) _voice.HealthChanged -= OnVoiceHealthChanged;
         _voice?.Dispose();
         _voice = null;
         _voiceSend.Reset();
@@ -289,6 +314,8 @@ internal sealed partial class PanelForm
 
         if (voice.State != _voiceStateShown || voice.LinkCode != _voiceCodeShown)
             UpdateVoiceUi();
+
+        UpdateVoiceHealthLine();
     }
 
     /// <summary>
@@ -346,6 +373,77 @@ internal sealed partial class PanelForm
                 SetStatus("VOICE CALL ENDED", PanelTheme.TextSecondary);
                 break;
         }
+    }
+
+    /// <summary>
+    /// Shows what the monitor makes of the call. Polled with the meters rather than driven by
+    /// the event, so the line is right even if a change arrived while the panel was hidden.
+    /// </summary>
+    private void UpdateVoiceHealthLine()
+    {
+        var voice = _voice;
+        var code = voice?.HealthCode ?? VoiceHealthCode.Idle;
+
+        // Out of a call there is nothing to report, and a lit lamp with no words beside it
+        // reads as a fault rather than as nothing to say.
+        string text = code == VoiceHealthCode.Idle
+            ? "NO CALL IN PROGRESS"
+            : voice?.HealthMessage ?? string.Empty;
+
+        if (_voiceHealth.Text == text && _voiceHealth.IsLit == (code == VoiceHealthCode.Healthy))
+            return;
+
+        _voiceHealth.Text = text;
+        _voiceHealth.ShowLamp = code != VoiceHealthCode.Idle;
+        _voiceHealth.IsLit = code == VoiceHealthCode.Healthy;
+        _voiceHealth.LampColor = code switch
+        {
+            VoiceHealthCode.Healthy => PanelTheme.LampGreen,
+            VoiceHealthCode.Idle => PanelTheme.LampGreen,
+            _ => PanelTheme.LampAmber
+        };
+        _voiceHealth.TextColor = code is VoiceHealthCode.Idle or VoiceHealthCode.Healthy
+            ? PanelTheme.TextSecondary
+            : PanelTheme.LampAmber;
+        _voiceHealth.Invalidate();
+    }
+
+    /// <summary>
+    /// A fault found while the panel is in the tray would otherwise go unseen until somebody
+    /// opened it - which during a game is exactly when nobody will. Arrives on the monitor's
+    /// timer thread, so it hops to the UI thread first.
+    /// </summary>
+    private void OnVoiceHealthChanged(VoiceHealthCode code, string message)
+    {
+        if (IsDisposed || !IsHandleCreated) return;
+
+        try
+        {
+            BeginInvoke(new Action(() =>
+            {
+                UpdateVoiceHealthLine();
+
+                if (code is VoiceHealthCode.Idle or VoiceHealthCode.Healthy) return;
+
+                SetStatus(message, PanelTheme.LampAmber);
+
+                if (!Visible && _tray is not null)
+                    _tray.ShowBalloonTip(6000, "CommPanel voice", message, ToolTipIcon.Warning);
+            }));
+        }
+        catch (ObjectDisposedException) { }
+        catch (InvalidOperationException) { }
+    }
+
+    private void ShowConnectionCheck()
+    {
+        bool wasTopMost = TopMost;
+        TopMost = false;
+
+        using var dialog = new ConnectionCheckDialog(_settings);
+        dialog.ShowDialog(this);
+
+        TopMost = wasTopMost;
     }
 
     // --------------------------------------------------------------- actions
@@ -420,6 +518,8 @@ internal sealed partial class PanelForm
     {
         _voiceTimer.Stop();
         _voiceTimer.Dispose();
+
+        if (_voice is not null) _voice.HealthChanged -= OnVoiceHealthChanged;
         _voice?.Dispose();
         _voice = null;
     }

@@ -17,6 +17,16 @@ internal static class VoiceFormat
 
     public const int SamplesPerFrame = SampleRate * FrameMilliseconds / 1000; // 320
     public const int BytesPerFrame = SamplesPerFrame * 2;                      // 640
+
+    /// <summary>
+    /// Above this a level counts as real sound rather than a quiet room. Used to tell
+    /// "nobody is talking" apart from "the audio path is broken", which look identical on
+    /// a meter and need completely different answers.
+    /// </summary>
+    public const float SignalFloor = 0.02f;
+
+    /// <summary>Below this, a stream is producing nothing at all.</summary>
+    public const float SilenceFloor = 0.005f;
 }
 
 /// <summary>

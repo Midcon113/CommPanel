@@ -228,8 +228,8 @@ internal sealed class PlateList : ChassisControl
     {
         switch (e.KeyCode)
         {
-            case Keys.Up: Move(-1); e.Handled = true; break;
-            case Keys.Down: Move(1); e.Handled = true; break;
+            case Keys.Up: MoveSelection(-1); e.Handled = true; break;
+            case Keys.Down: MoveSelection(1); e.Handled = true; break;
             case Keys.Home: SelectedIndex = 0; e.Handled = true; break;
             case Keys.End: SelectedIndex = _items.Count - 1; e.Handled = true; break;
             case Keys.Space when ShowLamps && _selected >= 0:
@@ -241,7 +241,8 @@ internal sealed class PlateList : ChassisControl
         base.OnKeyDown(e);
     }
 
-    private void Move(int delta)
+    /// <summary>Steps the selection. Not "Move": Control already has an event of that name.</summary>
+    private void MoveSelection(int delta)
     {
         if (_items.Count == 0) return;
         SelectedIndex = Math.Clamp(_selected + delta, 0, _items.Count - 1);

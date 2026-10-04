@@ -49,6 +49,23 @@ internal sealed class VoiceCapture : IDisposable
     /// <summary>Silences the outgoing stream without tearing the call down.</summary>
     public bool Muted { get; set; }
 
+    /// <summary>
+    /// Frames handed on since the stream opened. A counter that stops moving means the
+    /// device has died, which is a different fault from a microphone that is merely quiet.
+    /// </summary>
+    public long FramesDelivered => Interlocked.Read(ref _framesDelivered);
+
+    private long _framesDelivered;
+    private float _healthPeak;
+
+    /// <summary>Peak for the health monitor, kept separate from the meter's.</summary>
+    public float TakeHealthPeak()
+    {
+        float peak = _healthPeak;
+        _healthPeak = 0f;
+        return peak;
+    }
+
     public static VoiceCapture? Open(IMMDeviceEnumerator enumerator, string deviceId,
                                      Action<short[]> onFrame, out string? error)
     {
@@ -204,6 +221,7 @@ internal sealed class VoiceCapture : IDisposable
         }
 
         Peak = peak;
+        if (peak > _healthPeak) _healthPeak = peak;
 
         _resampled.Clear();
         resampler.Drain(_resampled);
@@ -217,6 +235,8 @@ internal sealed class VoiceCapture : IDisposable
 
             var ready = _frame.ToArray();
             _frame.Clear();
+
+            Interlocked.Increment(ref _framesDelivered);
 
             try { _onFrame(ready); }
             catch { /* a failing consumer must not kill the capture thread */ }
